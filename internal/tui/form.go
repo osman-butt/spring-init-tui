@@ -12,17 +12,22 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/osman-butt/spring-init-tui/internal/initializr"
 )
 
 // The name becomes both the Maven artifactId and the project directory.
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// The group becomes the Maven groupId and the start of the Java package, so
-// it has to be made of valid package segments.
-var groupPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+// The group becomes the Maven groupId and the start of the default Java
+// package, so it has to be made of valid package segments, like the package
+// itself.
+var packagePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 
 // fallbackGroup is used when the metadata does not name a default group.
 const fallbackGroup = "com.example"
+
+const examplePackage = fallbackGroup + ".demo"
 
 func newNameInput() textinput.Model {
 	input := textinput.New()
@@ -35,6 +40,13 @@ func newGroupInput() textinput.Model {
 	input := textinput.New()
 	input.Placeholder = fallbackGroup
 	input.CharLimit = 100
+	return input
+}
+
+func newPackageInput() textinput.Model {
+	input := textinput.New()
+	input.Placeholder = examplePackage
+	input.CharLimit = 200
 	return input
 }
 
@@ -83,7 +95,7 @@ func validateGroup(group string) error {
 	switch {
 	case group == "":
 		return errors.New("enter a group, for example " + fallbackGroup)
-	case !groupPattern.MatchString(group):
+	case !packagePattern.MatchString(group):
 		return errors.New("use dot-separated names made of letters, digits and '_', for example " + fallbackGroup)
 	}
 	return nil
@@ -103,8 +115,9 @@ func (m Model) updateGroup(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.groupID = group
 			m.group.Blur()
-			m.setScreen(screenJava)
-			return m, nil
+			m.prefillPackage()
+			m.setScreen(screenPackage)
+			return m, m.pkg.Focus()
 		}
 		m.groupErr = nil
 	}
@@ -112,6 +125,60 @@ func (m Model) updateGroup(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.group, cmd = m.group.Update(msg)
 	return m, cmd
+}
+
+// prefillPackage offers the package derived from the group and the name,
+// unless the user has typed a package of their own.
+func (m *Model) prefillPackage() {
+	derived := initializr.PackageName(m.groupID, m.name)
+	if current := m.pkg.Value(); current == "" || current == m.packageDefault {
+		m.pkg.SetValue(derived)
+		m.pkg.CursorEnd()
+	}
+	m.packageDefault = derived
+}
+
+func validatePackage(name string) error {
+	switch {
+	case name == "":
+		return errors.New("enter a package name, for example " + examplePackage)
+	case !packagePattern.MatchString(name):
+		return errors.New("use dot-separated names made of letters, digits and '_', for example " + examplePackage)
+	}
+	return nil
+}
+
+func (m Model) updatePackage(msg tea.Msg) (Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Matches(k, m.keys.Back):
+			m.pkg.Blur()
+			m.setScreen(screenGroup)
+			return m, m.group.Focus()
+		case key.Matches(k, m.keys.Next):
+			name := strings.TrimSpace(m.pkg.Value())
+			if m.packageErr = validatePackage(name); m.packageErr != nil {
+				return m, nil
+			}
+			m.packageName = name
+			m.pkg.Blur()
+			m.setScreen(screenJava)
+			return m, nil
+		}
+		m.packageErr = nil
+	}
+
+	var cmd tea.Cmd
+	m.pkg, cmd = m.pkg.Update(msg)
+	return m, cmd
+}
+
+func (m Model) packageView() string {
+	lines := []string{m.styles.header.Render("Package name"), m.pkg.View()}
+	if m.packageErr != nil {
+		lines = append(lines, m.styles.err.Width(m.width).Render(m.packageErr.Error()))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) groupView() string {
@@ -157,8 +224,8 @@ func (m Model) updateJava(msg tea.Msg) (Model, tea.Cmd) {
 		m.setScreen(screenDeps)
 		return m, m.search.Focus()
 	case key.Matches(k, m.keys.Back):
-		m.setScreen(screenGroup)
-		return m, m.group.Focus()
+		m.setScreen(screenPackage)
+		return m, m.pkg.Focus()
 	case key.Matches(k, m.keys.Quit):
 		return m.quit()
 	}
@@ -223,7 +290,7 @@ func (m Model) summaryView() string {
 	return strings.Join([]string{
 		label("Artifact      ") + m.name,
 		label("Group         ") + m.groupID,
-		label("Package       ") + m.request().PackageName,
+		label("Package       ") + m.packageName,
 		label("Java          ") + m.javaVersion(),
 		// Wrap a long list under its own column instead of cutting it off.
 		lipgloss.JoinHorizontal(lipgloss.Top, label("Dependencies  "),

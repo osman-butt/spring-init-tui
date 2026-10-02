@@ -25,7 +25,7 @@ type Request struct {
 	Dependencies []string
 }
 
-// PackageName returns the base Java package for a project: the group
+// PackageName returns the default base Java package for a project: the group
 // followed by the artifact in lower case, without the characters a package
 // name cannot contain. Initializr's own default replaces those with
 // underscores ("spring-demo" becomes "spring_demo"); this drops them

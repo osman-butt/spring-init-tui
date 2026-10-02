@@ -28,6 +28,7 @@ const (
 	screenLoading screen = iota
 	screenName
 	screenGroup
+	screenPackage
 	screenJava
 	screenDeps
 	screenConfirm
@@ -58,13 +59,20 @@ type Model struct {
 	width, height int
 
 	// Answers collected so far.
-	name       string
-	nameErr    error
-	groupID    string
-	groupErr   error
-	javaCursor int
-	selected   map[string]bool // dependency IDs
-	confirmYes bool
+	name        string
+	nameErr     error
+	groupID     string
+	groupErr    error
+	packageName string
+	packageErr  error
+	javaCursor  int
+	selected    map[string]bool // dependency IDs
+	confirmYes  bool
+
+	// packageDefault is the package last derived from the group and the
+	// name. While the input still holds it, the user has not edited the
+	// package, so it keeps following the two.
+	packageDefault string
 
 	// exists reports whether a path is already taken. Tests replace it.
 	exists func(path string) bool
@@ -74,6 +82,7 @@ type Model struct {
 	spinner spinner.Model
 	input   textinput.Model // artifact name
 	group   textinput.Model
+	pkg     textinput.Model
 	search  textinput.Model // dependency search
 	deps    list.Model
 	styles  styles
@@ -98,6 +107,7 @@ func New(backend Backend) Model {
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 		input:   newNameInput(),
 		group:   newGroupInput(),
+		pkg:     newPackageInput(),
 		search:  newSearchInput(),
 		deps:    newDepsList(),
 	}
@@ -191,6 +201,8 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.updateName(msg)
 	case screenGroup:
 		return m.updateGroup(msg)
+	case screenPackage:
+		return m.updatePackage(msg)
 	case screenJava:
 		return m.updateJava(msg)
 	case screenDeps:
@@ -252,6 +264,7 @@ func (m *Model) syncKeys() {
 	s := m.screen
 	onDeps := s == screenDeps
 	searching := onDeps && m.search.Value() != ""
+	typing := s == screenGroup || s == screenPackage // esc goes back, so only ctrl+c quits
 
 	k := &m.keys
 	k.Up.SetEnabled(s == screenJava)
@@ -261,7 +274,7 @@ func (m *Model) syncKeys() {
 	k.ListNav.SetEnabled(onDeps)
 	// esc empties the search first and goes back only when it is empty.
 	k.ClearSearch.SetEnabled(searching)
-	k.Next.SetEnabled(s == screenName || s == screenGroup || s == screenJava || onDeps)
+	k.Next.SetEnabled(s == screenName || typing || s == screenJava || onDeps)
 	k.Switch.SetEnabled(s == screenConfirm)
 	k.Confirm.SetEnabled(s == screenConfirm)
 	k.Yes.SetEnabled(s == screenConfirm)
@@ -269,14 +282,14 @@ func (m *Model) syncKeys() {
 	// From the error screen there is only a way back when the answers
 	// exist, i.e. when generating failed rather than loading.
 	generateFailed := s == screenError && m.failed == screenGenerating
-	k.Back.SetEnabled(s == screenGroup || s == screenJava || s == screenConfirm || (onDeps && !searching) || generateFailed)
+	k.Back.SetEnabled(typing || s == screenJava || s == screenConfirm || (onDeps && !searching) || generateFailed)
 	k.Retry.SetEnabled(s == screenError)
 	// "q" is text on the screens with an input. On the name screen esc
 	// quits; on the others esc is taken, which leaves ctrl+c as the only
 	// way out there.
 	k.Cancel.SetEnabled(s == screenName)
-	k.Quit.SetEnabled(s != screenName && s != screenGroup && !onDeps)
-	k.Interrupt.SetEnabled(s == screenGroup || onDeps)
+	k.Quit.SetEnabled(s != screenName && !typing && !onDeps)
+	k.Interrupt.SetEnabled(typing || onDeps)
 }
 
 func (m *Model) setStyles(isDark bool) {
@@ -290,6 +303,7 @@ func (m *Model) setStyles(isDark bool) {
 	inputStyles.Focused.Prompt = m.styles.selected
 	m.input.SetStyles(inputStyles)
 	m.group.SetStyles(inputStyles)
+	m.pkg.SetStyles(inputStyles)
 	m.search.SetStyles(inputStyles)
 
 	listStyles := list.DefaultStyles(isDark)
@@ -306,6 +320,7 @@ func (m *Model) resize() {
 	inputWidth := max(m.width-len(m.input.Prompt)-1, 1)
 	m.input.SetWidth(inputWidth)
 	m.group.SetWidth(inputWidth)
+	m.pkg.SetWidth(inputWidth)
 	m.search.SetWidth(inputWidth)
 
 	const blankLines = 3 // below the banner, above the footer, end of frame
@@ -341,6 +356,8 @@ func (m Model) content() string {
 		body = m.nameView()
 	case screenGroup:
 		body = m.groupView()
+	case screenPackage:
+		body = m.packageView()
 	case screenJava:
 		body = m.javaView()
 	case screenDeps:

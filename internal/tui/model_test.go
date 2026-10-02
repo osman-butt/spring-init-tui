@@ -348,8 +348,8 @@ func TestGroupIsPrefilledFromMetadata(t *testing.T) {
 	}
 
 	m = keys(t, m, "enter")
-	if m.screen != screenJava || m.groupID != "com.example" {
-		t.Errorf("screen = %v, groupID = %q; want java screen with com.example", m.screen, m.groupID)
+	if m.screen != screenPackage || m.groupID != "com.example" {
+		t.Errorf("screen = %v, groupID = %q; want package screen with com.example", m.screen, m.groupID)
 	}
 }
 
@@ -407,7 +407,7 @@ func TestPackageIsDerivedFromGroupAndName(t *testing.T) {
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
 	m = keys(t, typeText(t, m, "spring-demo"), "enter")
-	m = keys(t, replaceGroup(t, m, " dev.osman "), "enter", "enter", "enter")
+	m = keys(t, replaceGroup(t, m, " dev.osman "), "enter", "enter", "enter", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want confirm", m.screen)
 	}
@@ -434,8 +434,123 @@ func TestPackageIsDerivedFromGroupAndName(t *testing.T) {
 	}
 }
 
+// onPackage returns a model on the package screen for project "demo" in the
+// default group.
+func onPackage(t *testing.T) Model {
+	t.Helper()
+	m, cmd := step(t, onGroup(t), press("enter"))
+	if m.screen != screenPackage {
+		t.Fatalf("screen = %v, want package", m.screen)
+	}
+	if !m.pkg.Focused() || m.group.Focused() || cmd == nil {
+		t.Fatal("the package input should have taken the focus from the group input")
+	}
+	return m
+}
+
+// replacePackage clears the prefilled package and types a new one.
+func replacePackage(t *testing.T, m Model, name string) Model {
+	t.Helper()
+	for range m.pkg.Value() {
+		m = keys(t, m, "backspace")
+	}
+	return typeText(t, m, name)
+}
+
+func TestPackageIsPrefilledFromGroupAndName(t *testing.T) {
+	m := onPackage(t)
+	if got := m.pkg.Value(); got != "com.example.demo" {
+		t.Errorf("package input = %q, want com.example.demo", got)
+	}
+	out := plain(m)
+	if !strings.Contains(out, "Package name") || !strings.Contains(out, "com.example.demo") {
+		t.Errorf("package view should show its header and the default:\n%s", out)
+	}
+
+	m = keys(t, m, "enter")
+	if m.screen != screenJava || m.packageName != "com.example.demo" {
+		t.Errorf("screen = %v, packageName = %q; want java screen with com.example.demo", m.screen, m.packageName)
+	}
+}
+
+func TestUntouchedPackageFollowsTheGroup(t *testing.T) {
+	m := keys(t, onPackage(t), "esc")
+	m = keys(t, replaceGroup(t, m, "dev.osman"), "enter")
+	if m.screen != screenPackage || m.pkg.Value() != "dev.osman.demo" {
+		t.Errorf("screen = %v, package = %q; want package screen with dev.osman.demo", m.screen, m.pkg.Value())
+	}
+	if got := m.pkg.Position(); got != len("dev.osman.demo") {
+		t.Errorf("cursor at %d, want it at the end", got)
+	}
+}
+
+func TestEditedPackageIsKept(t *testing.T) {
+	backend := &fakeBackend{metadata: testMetadata}
+	m := replacePackage(t, onPackage(t), " dev.custom ")
+	m.backend = backend
+
+	// Changing the group afterwards must not overwrite it.
+	m = keys(t, m, "esc")
+	m = keys(t, replaceGroup(t, m, "dev.osman"), "enter")
+	if got := m.pkg.Value(); got != " dev.custom " {
+		t.Fatalf("package input = %q, want the typed package to be kept", got)
+	}
+
+	m = keys(t, m, "enter", "enter", "enter")
+	if m.screen != screenConfirm {
+		t.Fatalf("screen = %v, want confirm", m.screen)
+	}
+	if out := plain(m); !strings.Contains(out, "dev.custom") || strings.Contains(out, "dev.osman.demo") {
+		t.Errorf("summary should show the typed package:\n%s", out)
+	}
+
+	m.generateCmd()()
+	if len(backend.requests) != 1 || backend.requests[0].PackageName != "dev.custom" || backend.requests[0].GroupID != "dev.osman" {
+		t.Errorf("Generate requests = %+v, want group dev.osman with package dev.custom", backend.requests)
+	}
+}
+
+func TestPackageValidation(t *testing.T) {
+	tests := []struct {
+		name, input, wantErr string
+	}{
+		{name: "empty", input: "", wantErr: "enter a package name"},
+		{name: "hyphen", input: "com.example.my-app", wantErr: "use dot-separated names"},
+		{name: "empty segment", input: "com..demo", wantErr: "use dot-separated names"},
+		{name: "trailing dot", input: "com.example.", wantErr: "use dot-separated names"},
+		{name: "segment starts with a digit", input: "com.example.2048", wantErr: "use dot-separated names"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := keys(t, replacePackage(t, onPackage(t), tt.input), "enter")
+			if m.screen != screenPackage {
+				t.Fatalf("screen = %v, want to stay on package", m.screen)
+			}
+			if out := plain(m); !strings.Contains(out, tt.wantErr) {
+				t.Errorf("view should explain the problem (%q):\n%s", tt.wantErr, out)
+			}
+
+			m = typeText(t, m, "x")
+			if m.packageErr != nil {
+				t.Errorf("packageErr = %v, want it cleared after typing", m.packageErr)
+			}
+		})
+	}
+}
+
+func TestPackageAcceptsLettersThatAreShortcutsElsewhere(t *testing.T) {
+	m := typeText(t, replacePackage(t, onPackage(t), ""), "qjk.r")
+	if m.screen != screenPackage || m.pkg.Value() != "qjk.r" {
+		t.Errorf("screen = %v, package = %q; want package screen with %q", m.screen, m.pkg.Value(), "qjk.r")
+	}
+	out := plain(m)
+	if strings.Contains(out, "q quit") || !strings.Contains(out, "ctrl+c quit") {
+		t.Errorf("footer should offer ctrl+c, not q, while typing:\n%s", out)
+	}
+}
+
 func TestJavaVersionSelection(t *testing.T) {
-	m := keys(t, onGroup(t), "enter")
+	m := keys(t, onPackage(t), "enter")
 	if m.screen != screenJava {
 		t.Fatalf("screen = %v, want java", m.screen)
 	}
@@ -481,7 +596,7 @@ func TestJavaDefaultFallsBackToFirstVersion(t *testing.T) {
 }
 
 func TestBackNavigation(t *testing.T) {
-	m := keys(t, replaceGroup(t, onGroup(t), "dev.osman"), "enter", "up", "enter", "tab", "enter")
+	m := keys(t, replaceGroup(t, onGroup(t), "dev.osman"), "enter", "enter", "up", "enter", "tab", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
@@ -497,10 +612,18 @@ func TestBackNavigation(t *testing.T) {
 	}
 
 	m, cmd := step(t, m, press("esc"))
-	if m.screen != screenGroup || m.group.Value() != "dev.osman" {
-		t.Fatalf("esc on java: screen = %v, group = %q; want group screen with dev.osman", m.screen, m.group.Value())
+	if m.screen != screenPackage || m.pkg.Value() != "dev.osman.demo" {
+		t.Fatalf("esc on java: screen = %v, package = %q; want package screen with dev.osman.demo", m.screen, m.pkg.Value())
 	}
-	if !m.group.Focused() || cmd == nil {
+	if !m.pkg.Focused() || cmd == nil {
+		t.Error("the package input should be focused again")
+	}
+
+	m, cmd = step(t, m, press("esc"))
+	if m.screen != screenGroup || m.group.Value() != "dev.osman" {
+		t.Fatalf("esc on package: screen = %v, group = %q; want group screen with dev.osman", m.screen, m.group.Value())
+	}
+	if !m.group.Focused() || m.pkg.Focused() || cmd == nil {
 		t.Error("the group input should be focused again")
 	}
 
@@ -517,11 +640,13 @@ func TestBackNavigation(t *testing.T) {
 }
 
 func TestQuitFromFormScreens(t *testing.T) {
-	// q is search text on the dependency screen, so ctrl+c quits there.
-	quitKeys := map[screen]string{screenJava: "q", screenDeps: "ctrl+c", screenConfirm: "q"}
+	// q is text on the package and dependency screens, so ctrl+c quits there.
+	quitKeys := map[screen]string{
+		screenPackage: "ctrl+c", screenJava: "q", screenDeps: "ctrl+c", screenConfirm: "q",
+	}
 
 	m := onGroup(t)
-	for _, screen := range []screen{screenJava, screenDeps, screenConfirm} {
+	for _, screen := range []screen{screenPackage, screenJava, screenDeps, screenConfirm} {
 		m = keys(t, m, "enter")
 		if m.screen != screen {
 			t.Fatalf("screen = %v, want %v", m.screen, screen)
@@ -534,7 +659,7 @@ func TestQuitFromFormScreens(t *testing.T) {
 // onDeps returns a model on the dependency screen.
 func onDeps(t *testing.T) Model {
 	t.Helper()
-	m := keys(t, onGroup(t), "enter", "enter")
+	m := keys(t, onPackage(t), "enter", "enter")
 	if m.screen != screenDeps {
 		t.Fatalf("screen = %v, want deps", m.screen)
 	}
@@ -694,7 +819,7 @@ func TestDepsArrowsAndPagesMoveWhileSearching(t *testing.T) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter")
 	if m.deps.Paginator.TotalPages < 2 {
 		t.Fatalf("test needs several pages, got %d", m.deps.Paginator.TotalPages)
 	}
@@ -760,7 +885,7 @@ func onConfirm(t *testing.T) (Model, *fakeBackend) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "tab", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter", "tab", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want confirm", m.screen)
 	}
@@ -1005,6 +1130,9 @@ func TestViewFitsWindow(t *testing.T) {
 		m = typeText(t, m, strings.Repeat(".long", 15))
 		check("long group", m)
 		m = keys(t, m, "enter")
+		check("long package", m)
+		check("invalid package", keys(t, typeText(t, m, "-"), "enter"))
+		m = keys(t, m, "enter")
 		check("java", m)
 		m = keys(t, m, "enter")
 		check("deps", m)
@@ -1033,7 +1161,7 @@ func TestDepsListHeightStaysTheSame(t *testing.T) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter")
 
 	want := lipgloss.Height(m.View().Content)
 	variants := map[string]Model{
