@@ -78,5 +78,3 @@ On the dependency screen, just type to search:
 go run ./cmd/si
 go test ./...
 ```
-
-The demo GIF is recorded with [VHS](https://github.com/charmbracelet/vhs): `vhs demo/si.tape`.
