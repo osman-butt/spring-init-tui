@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -804,13 +805,26 @@ func TestConfirmYesGeneratesTheProject(t *testing.T) {
 		t.Errorf("Err() = %v, Interrupted() = %v; want a clean exit", m.Err(), m.Interrupted())
 	}
 	out := plain(m)
-	for _, want := range []string{"Project generated successfully.", "cd demo", "./mvnw spring-boot:run"} {
+	for _, want := range []string{"Project generated successfully.", "cd demo", runCommand(runtime.GOOS)} {
 		if !strings.Contains(out, want) {
 			t.Errorf("result is missing %q:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "quit") {
 		t.Errorf("result should not show the help footer:\n%s", out)
+	}
+}
+
+func TestRunCommand(t *testing.T) {
+	tests := map[string]string{
+		"linux":   "./mvnw spring-boot:run",
+		"darwin":  "./mvnw spring-boot:run",
+		"windows": `.\mvnw.cmd spring-boot:run`,
+	}
+	for goos, want := range tests {
+		if got := runCommand(goos); got != want {
+			t.Errorf("runCommand(%q) = %q, want %q", goos, got, want)
+		}
 	}
 }
 

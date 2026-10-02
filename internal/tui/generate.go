@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"runtime"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
@@ -45,12 +46,21 @@ func (m Model) updateGenerating(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// runCommand returns how to start the generated project with its Maven
+// wrapper on the given operating system.
+func runCommand(goos string) string {
+	if goos == "windows" {
+		return `.\mvnw.cmd spring-boot:run` // works in cmd and in PowerShell
+	}
+	return "./mvnw spring-boot:run"
+}
+
 func (m Model) doneView() string {
 	return m.styles.result.Render(strings.Join([]string{
 		m.styles.success.Render("Project generated successfully."),
 		"",
 		"Run it:",
 		"cd " + m.name,
-		"./mvnw spring-boot:run",
+		runCommand(runtime.GOOS),
 	}, "\n"))
 }
