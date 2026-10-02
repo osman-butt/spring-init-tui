@@ -72,7 +72,7 @@ type Model struct {
 	keys    keyMap
 	help    help.Model
 	spinner spinner.Model
-	input   textinput.Model // project name
+	input   textinput.Model // artifact name
 	group   textinput.Model
 	search  textinput.Model // dependency search
 	deps    list.Model

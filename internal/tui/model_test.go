@@ -167,7 +167,7 @@ func TestMetadataLoadedShowsNameScreen(t *testing.T) {
 	if !m.input.Focused() || cmd == nil {
 		t.Error("the name input should be focused and return its blink command")
 	}
-	if !strings.Contains(plain(m), "Project") {
+	if !strings.Contains(plain(m), "Artifact") {
 		t.Errorf("name view is missing its header:\n%s", plain(m))
 	}
 }
@@ -261,8 +261,8 @@ func TestNameValidation(t *testing.T) {
 		exists  bool
 		wantErr string
 	}{
-		{name: "empty", input: "", wantErr: "enter a project name"},
-		{name: "only spaces", input: "   ", wantErr: "enter a project name"},
+		{name: "empty", input: "", wantErr: "enter an artifact name"},
+		{name: "only spaces", input: "   ", wantErr: "enter an artifact name"},
 		{name: "path separator", input: "a/b", wantErr: "use letters, digits"},
 		{name: "parent directory", input: "..", wantErr: "use letters, digits"},
 		{name: "space inside", input: "my app", wantErr: "use letters, digits"},

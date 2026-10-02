@@ -46,7 +46,7 @@ func pathExists(path string) bool {
 func (m Model) validateName(name string) error {
 	switch {
 	case name == "":
-		return errors.New("enter a project name")
+		return errors.New("enter an artifact name")
 	case !namePattern.MatchString(name):
 		return errors.New("use letters, digits, '.', '-' and '_' only")
 	case m.exists(name):
@@ -123,7 +123,7 @@ func (m Model) groupView() string {
 }
 
 func (m Model) nameView() string {
-	lines := []string{m.styles.header.Render("Project"), m.input.View()}
+	lines := []string{m.styles.header.Render("Artifact"), m.input.View()}
 	if m.nameErr != nil {
 		lines = append(lines, m.styles.err.Width(m.width).Render(m.nameErr.Error()))
 	}
@@ -221,7 +221,7 @@ func (m Model) summaryView() string {
 	}
 	label := m.styles.subtle.Render
 	return strings.Join([]string{
-		label("Project       ") + m.name,
+		label("Artifact      ") + m.name,
 		label("Group         ") + m.groupID,
 		label("Package       ") + m.request().PackageName,
 		label("Java          ") + m.javaVersion(),
