@@ -36,6 +36,25 @@ archives:
       - README.md
       - LICENSE
 
+# Debian packages. The release workflow lists them in the apt repository on
+# GitHub Pages (see scripts/apt-repo.sh), so that this works:
+#
+#   sudo apt install si
+nfpms:
+  - id: si
+    package_name: si
+    ids: [si]
+    formats: [deb]
+    bindir: /usr/bin
+    section: devel
+    maintainer: Osman Butt <butt.osman@gmail.com>
+    homepage: https://github.com/osman-butt/spring-init-tui
+    description: Terminal UI for Spring Initializr
+    license: MIT
+    contents:
+      - src: LICENSE
+        dst: /usr/share/doc/si/copyright
+
 checksum:
   name_template: checksums.txt
 
