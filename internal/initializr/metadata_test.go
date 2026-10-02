@@ -43,6 +43,18 @@ func TestMetadata(t *testing.T) {
 		t.Errorf("User-Agent header = %q, want %q", gotUserAgent, userAgent)
 	}
 
+	wantBoot := []BootVersion{
+		{ID: "4.2.0-SNAPSHOT", Name: "4.2.0 (SNAPSHOT)"},
+		{ID: "4.2.0-M2", Name: "4.2.0 (M2)"},
+		{ID: "4.1.1", Name: "4.1.1"},
+		{ID: "4.0.8", Name: "4.0.8"},
+	}
+	if !slices.Equal(md.BootVersions, wantBoot) {
+		t.Errorf("BootVersions = %v, want %v", md.BootVersions, wantBoot)
+	}
+	if md.DefaultBootVersion != "4.1.1" {
+		t.Errorf("DefaultBootVersion = %q, want %q", md.DefaultBootVersion, "4.1.1")
+	}
 	if want := []string{"27", "25", "21", "17"}; !slices.Equal(md.JavaVersions, want) {
 		t.Errorf("JavaVersions = %v, want %v", md.JavaVersions, want)
 	}
@@ -57,8 +69,11 @@ func TestMetadata(t *testing.T) {
 		t.Fatalf("len(Dependencies) = %d, want 4", len(md.Dependencies))
 	}
 	web := md.Dependencies[2]
-	if web.ID != "web" || web.Name != "Spring Web" || web.Group != "Web" {
-		t.Errorf("Dependencies[2] = %+v, want web / Spring Web / Web", web)
+	if web.ID != "web" || web.Name != "Spring Web" || web.Group != "Web" || web.VersionRange != "" {
+		t.Errorf("Dependencies[2] = %+v, want web / Spring Web / Web without a version range", web)
+	}
+	if got := md.Dependencies[1].VersionRange; got != "[4.0.0,4.2.0-M1)" {
+		t.Errorf("Dependencies[1].VersionRange = %q, want %q", got, "[4.0.0,4.2.0-M1)")
 	}
 	if !strings.HasPrefix(web.Description, "Build web") {
 		t.Errorf("Dependencies[2].Description = %q", web.Description)

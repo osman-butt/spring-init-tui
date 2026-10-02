@@ -103,6 +103,7 @@ func TestGenerate(t *testing.T) {
 		Name:         "spring-demo",
 		GroupID:      "dev.osman",
 		PackageName:  "dev.osman.springdemo",
+		BootVersion:  "4.0.8",
 		JavaVersion:  "21",
 		Dependencies: []string{"web", "data-jpa"},
 	}
@@ -120,6 +121,7 @@ func TestGenerate(t *testing.T) {
 		"name":         "spring-demo",
 		"groupId":      "dev.osman",
 		"packageName":  "dev.osman.springdemo",
+		"bootVersion":  "4.0.8",
 		"javaVersion":  "21",
 		"dependencies": "web,data-jpa",
 	}
@@ -156,7 +158,7 @@ func TestGenerateLeavesOutEmptyOptions(t *testing.T) {
 	if err := c.Generate(context.Background(), Request{Name: "demo", JavaVersion: "17"}, dest); err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	for _, param := range []string{"groupId", "packageName", "dependencies"} {
+	for _, param := range []string{"groupId", "packageName", "bootVersion", "dependencies"} {
 		if gotQuery.Has(param) {
 			t.Errorf("%s = %q, want the parameter to be absent", param, gotQuery.Get(param))
 		}

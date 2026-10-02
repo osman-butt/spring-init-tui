@@ -127,10 +127,34 @@ func (m *Model) syncDepsDelegate() {
 	m.deps.SetDelegate(depDelegate{selected: m.selected, styles: m.styles})
 }
 
-// selectedDeps returns the chosen dependency IDs in metadata order.
+// availableDeps returns the dependencies that work with the chosen Spring
+// Boot version.
+func (m Model) availableDeps() []initializr.Dependency {
+	boot := m.boot().ID
+	var deps []initializr.Dependency
+	for _, d := range m.metadata.Dependencies {
+		if d.Supports(boot) {
+			deps = append(deps, d)
+		}
+	}
+	return deps
+}
+
+// showAvailableDeps lists the dependencies for the chosen Spring Boot
+// version, with the search still applied.
+func (m *Model) showAvailableDeps() tea.Cmd {
+	cmd := m.deps.SetItems(depItems(m.availableDeps()))
+	m.deps.ResetSelected()
+	m.applySearch()
+	return cmd
+}
+
+// selectedDeps returns the chosen dependency IDs in metadata order. A
+// dependency picked under another Spring Boot version is left out while the
+// current one cannot use it.
 func (m Model) selectedDeps() []string {
 	var ids []string
-	for _, d := range m.metadata.Dependencies {
+	for _, d := range m.availableDeps() {
 		if m.selected[d.ID] {
 			ids = append(ids, d.ID)
 		}
@@ -204,10 +228,13 @@ func (m Model) updateDeps(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) depsView() string {
-	total := len(m.metadata.Dependencies)
+	total := len(m.availableDeps())
 	count := fmt.Sprintf("%d dependencies", total)
 	if m.search.Value() != "" {
 		count = fmt.Sprintf("%d of %d", len(m.deps.VisibleItems()), total)
+	}
+	if hidden := len(m.metadata.Dependencies) - total; hidden > 0 {
+		count += fmt.Sprintf(" (%d not available for Spring Boot %s)", hidden, bootLabel(m.boot()))
 	}
 
 	// Page dots, or "3/15" when the dots do not fit.

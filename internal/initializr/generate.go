@@ -15,17 +15,18 @@ import (
 const maxArchiveBytes = 64 << 20
 
 // Request describes the project to generate. Name is also used as the
-// Maven artifactId. GroupID and PackageName are optional: Initializr falls
-// back to its own defaults when they are empty.
+// Maven artifactId. GroupID, PackageName and BootVersion are optional:
+// Initializr falls back to its own defaults when they are empty.
 type Request struct {
 	Name         string
 	GroupID      string
 	PackageName  string
+	BootVersion  string
 	JavaVersion  string
 	Dependencies []string
 }
 
-// PackageName returns the base Java package for a project: the group
+// PackageName returns the default base Java package for a project: the group
 // followed by the artifact in lower case, without the characters a package
 // name cannot contain. Initializr's own default replaces those with
 // underscores ("spring-demo" becomes "spring_demo"); this drops them
@@ -85,6 +86,9 @@ func (c *Client) download(ctx context.Context, req Request) ([]byte, error) {
 	}
 	if req.PackageName != "" {
 		q.Set("packageName", req.PackageName)
+	}
+	if req.BootVersion != "" {
+		q.Set("bootVersion", req.BootVersion)
 	}
 	q.Set("javaVersion", req.JavaVersion)
 	if len(req.Dependencies) > 0 {

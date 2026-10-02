@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -12,17 +13,22 @@ import (
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/osman-butt/spring-init-tui/internal/initializr"
 )
 
 // The name becomes both the Maven artifactId and the project directory.
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// The group becomes the Maven groupId and the start of the Java package, so
-// it has to be made of valid package segments.
-var groupPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+// The group becomes the Maven groupId and the start of the default Java
+// package, so it has to be made of valid package segments, like the package
+// itself.
+var packagePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
 
 // fallbackGroup is used when the metadata does not name a default group.
 const fallbackGroup = "com.example"
+
+const examplePackage = fallbackGroup + ".demo"
 
 func newNameInput() textinput.Model {
 	input := textinput.New()
@@ -38,6 +44,13 @@ func newGroupInput() textinput.Model {
 	return input
 }
 
+func newPackageInput() textinput.Model {
+	input := textinput.New()
+	input.Placeholder = examplePackage
+	input.CharLimit = 200
+	return input
+}
+
 func pathExists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
@@ -46,7 +59,7 @@ func pathExists(path string) bool {
 func (m Model) validateName(name string) error {
 	switch {
 	case name == "":
-		return errors.New("enter a project name")
+		return errors.New("enter an artifact name")
 	case !namePattern.MatchString(name):
 		return errors.New("use letters, digits, '.', '-' and '_' only")
 	case m.exists(name):
@@ -83,7 +96,7 @@ func validateGroup(group string) error {
 	switch {
 	case group == "":
 		return errors.New("enter a group, for example " + fallbackGroup)
-	case !groupPattern.MatchString(group):
+	case !packagePattern.MatchString(group):
 		return errors.New("use dot-separated names made of letters, digits and '_', for example " + fallbackGroup)
 	}
 	return nil
@@ -103,8 +116,9 @@ func (m Model) updateGroup(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.groupID = group
 			m.group.Blur()
-			m.setScreen(screenJava)
-			return m, nil
+			m.prefillPackage()
+			m.setScreen(screenPackage)
+			return m, m.pkg.Focus()
 		}
 		m.groupErr = nil
 	}
@@ -112,6 +126,60 @@ func (m Model) updateGroup(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.group, cmd = m.group.Update(msg)
 	return m, cmd
+}
+
+// prefillPackage offers the package derived from the group and the name,
+// unless the user has typed a package of their own.
+func (m *Model) prefillPackage() {
+	derived := initializr.PackageName(m.groupID, m.name)
+	if current := m.pkg.Value(); current == "" || current == m.packageDefault {
+		m.pkg.SetValue(derived)
+		m.pkg.CursorEnd()
+	}
+	m.packageDefault = derived
+}
+
+func validatePackage(name string) error {
+	switch {
+	case name == "":
+		return errors.New("enter a package name, for example " + examplePackage)
+	case !packagePattern.MatchString(name):
+		return errors.New("use dot-separated names made of letters, digits and '_', for example " + examplePackage)
+	}
+	return nil
+}
+
+func (m Model) updatePackage(msg tea.Msg) (Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Matches(k, m.keys.Back):
+			m.pkg.Blur()
+			m.setScreen(screenGroup)
+			return m, m.group.Focus()
+		case key.Matches(k, m.keys.Next):
+			name := strings.TrimSpace(m.pkg.Value())
+			if m.packageErr = validatePackage(name); m.packageErr != nil {
+				return m, nil
+			}
+			m.packageName = name
+			m.pkg.Blur()
+			m.setScreen(screenBoot)
+			return m, nil
+		}
+		m.packageErr = nil
+	}
+
+	var cmd tea.Cmd
+	m.pkg, cmd = m.pkg.Update(msg)
+	return m, cmd
+}
+
+func (m Model) packageView() string {
+	lines := []string{m.styles.header.Render("Package name"), m.pkg.View()}
+	if m.packageErr != nil {
+		lines = append(lines, m.styles.err.Width(m.width).Render(m.packageErr.Error()))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) groupView() string {
@@ -123,11 +191,79 @@ func (m Model) groupView() string {
 }
 
 func (m Model) nameView() string {
-	lines := []string{m.styles.header.Render("Project"), m.input.View()}
+	lines := []string{m.styles.header.Render("Artifact"), m.input.View()}
 	if m.nameErr != nil {
 		lines = append(lines, m.styles.err.Width(m.width).Render(m.nameErr.Error()))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// choicesView lists the options of a pick-one screen and marks the one under
+// the cursor.
+func (m Model) choicesView(header string, options []string, cursor int) string {
+	lines := []string{m.styles.header.Render(header)}
+	for i, option := range options {
+		if i == cursor {
+			lines = append(lines, m.styles.selected.Render("> "+option))
+		} else {
+			lines = append(lines, "  "+option)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// defaultBootIndex returns the position of the metadata's default Spring
+// Boot version, or 0 if the default is not among the offered versions.
+func (m Model) defaultBootIndex() int {
+	return max(slices.IndexFunc(m.metadata.BootVersions, func(v initializr.BootVersion) bool {
+		return v.ID == m.metadata.DefaultBootVersion
+	}), 0)
+}
+
+// boot returns the chosen Spring Boot version. It is empty when the metadata
+// offers none, which leaves the choice to Initializr.
+func (m Model) boot() initializr.BootVersion {
+	if m.bootCursor < len(m.metadata.BootVersions) {
+		return m.metadata.BootVersions[m.bootCursor]
+	}
+	return initializr.BootVersion{}
+}
+
+// bootLabel is how a Spring Boot version is shown.
+func bootLabel(v initializr.BootVersion) string {
+	return cmp.Or(v.Name, v.ID)
+}
+
+func (m Model) updateBoot(msg tea.Msg) (Model, tea.Cmd) {
+	k, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+	switch {
+	case key.Matches(k, m.keys.Up):
+		m.bootCursor = max(m.bootCursor-1, 0)
+	case key.Matches(k, m.keys.Down):
+		m.bootCursor = min(m.bootCursor+1, len(m.metadata.BootVersions)-1)
+	case key.Matches(k, m.keys.Next):
+		// The version decides which dependencies can be offered.
+		cmd := m.showAvailableDeps()
+		m.setScreen(screenJava)
+		return m, cmd
+	case key.Matches(k, m.keys.Back):
+		m.setScreen(screenPackage)
+		return m, m.pkg.Focus()
+	case key.Matches(k, m.keys.Quit):
+		return m.quit()
+	}
+	return m, nil
+}
+
+func (m Model) bootView() string {
+	options := make([]string, len(m.metadata.BootVersions))
+	for i, v := range m.metadata.BootVersions {
+		options[i] = bootLabel(v)
+	}
+	return m.choicesView("Spring Boot version", options, m.bootCursor)
 }
 
 // defaultJavaIndex returns the position of the metadata's default Java
@@ -157,8 +293,7 @@ func (m Model) updateJava(msg tea.Msg) (Model, tea.Cmd) {
 		m.setScreen(screenDeps)
 		return m, m.search.Focus()
 	case key.Matches(k, m.keys.Back):
-		m.setScreen(screenGroup)
-		return m, m.group.Focus()
+		m.setScreen(screenBoot)
 	case key.Matches(k, m.keys.Quit):
 		return m.quit()
 	}
@@ -166,15 +301,7 @@ func (m Model) updateJava(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) javaView() string {
-	lines := []string{m.styles.header.Render("Java version")}
-	for i, version := range m.metadata.JavaVersions {
-		if i == m.javaCursor {
-			lines = append(lines, m.styles.selected.Render("> "+version))
-		} else {
-			lines = append(lines, "  "+version)
-		}
-	}
-	return strings.Join(lines, "\n")
+	return m.choicesView("Java version", m.metadata.JavaVersions, m.javaCursor)
 }
 
 func (m Model) updateConfirm(msg tea.Msg) (Model, tea.Cmd) {
@@ -221,9 +348,10 @@ func (m Model) summaryView() string {
 	}
 	label := m.styles.subtle.Render
 	return strings.Join([]string{
-		label("Project       ") + m.name,
+		label("Artifact      ") + m.name,
 		label("Group         ") + m.groupID,
-		label("Package       ") + m.request().PackageName,
+		label("Package       ") + m.packageName,
+		label("Spring Boot   ") + bootLabel(m.boot()),
 		label("Java          ") + m.javaVersion(),
 		// Wrap a long list under its own column instead of cutting it off.
 		lipgloss.JoinHorizontal(lipgloss.Top, label("Dependencies  "),
