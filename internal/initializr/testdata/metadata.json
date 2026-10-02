@@ -1,4 +1,8 @@
 {
+  "groupId": {
+    "type": "text",
+    "default": "com.example"
+  },
   "javaVersion": {
     "type": "single-select",
     "default": "17",

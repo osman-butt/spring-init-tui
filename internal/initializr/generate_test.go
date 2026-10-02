@@ -99,7 +99,13 @@ func TestGenerate(t *testing.T) {
 
 	parent := t.TempDir()
 	dest := filepath.Join(parent, "demo")
-	req := Request{Name: "demo", JavaVersion: "21", Dependencies: []string{"web", "data-jpa"}}
+	req := Request{
+		Name:         "spring-demo",
+		GroupID:      "dev.osman",
+		PackageName:  "dev.osman.springdemo",
+		JavaVersion:  "21",
+		Dependencies: []string{"web", "data-jpa"},
+	}
 
 	if err := c.Generate(context.Background(), req, dest); err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -110,8 +116,10 @@ func TestGenerate(t *testing.T) {
 	}
 	wantQuery := map[string]string{
 		"type":         "maven-project",
-		"artifactId":   "demo",
-		"name":         "demo",
+		"artifactId":   "spring-demo",
+		"name":         "spring-demo",
+		"groupId":      "dev.osman",
+		"packageName":  "dev.osman.springdemo",
 		"javaVersion":  "21",
 		"dependencies": "web,data-jpa",
 	}
@@ -136,7 +144,7 @@ func TestGenerate(t *testing.T) {
 	assertNoLeftovers(t, parent, "demo")
 }
 
-func TestGenerateWithoutDependencies(t *testing.T) {
+func TestGenerateLeavesOutEmptyOptions(t *testing.T) {
 	var gotQuery url.Values
 	archive := projectZip(t)
 	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -148,8 +156,29 @@ func TestGenerateWithoutDependencies(t *testing.T) {
 	if err := c.Generate(context.Background(), Request{Name: "demo", JavaVersion: "17"}, dest); err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
-	if gotQuery.Has("dependencies") {
-		t.Errorf("dependencies = %q, want the parameter to be absent", gotQuery.Get("dependencies"))
+	for _, param := range []string{"groupId", "packageName", "dependencies"} {
+		if gotQuery.Has(param) {
+			t.Errorf("%s = %q, want the parameter to be absent", param, gotQuery.Get(param))
+		}
+	}
+}
+
+func TestPackageName(t *testing.T) {
+	tests := []struct {
+		groupID, artifactID, want string
+	}{
+		{"com.example", "demo", "com.example.demo"},
+		{"com.example", "spring-demo", "com.example.springdemo"},
+		{"com.example", "my_app.v2", "com.example.myappv2"},
+		{"dev.osman", "MyApp", "dev.osman.myapp"},
+		{"com.example", "2048-game", "com.example._2048game"},
+		{"com.example", "---", "com.example"},
+		{"", "spring-demo", "springdemo"},
+	}
+	for _, tt := range tests {
+		if got := PackageName(tt.groupID, tt.artifactID); got != tt.want {
+			t.Errorf("PackageName(%q, %q) = %q, want %q", tt.groupID, tt.artifactID, got, tt.want)
+		}
 	}
 }
 

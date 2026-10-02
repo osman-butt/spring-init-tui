@@ -10,6 +10,7 @@ const metadataMediaType = "application/vnd.initializr.v2.3+json"
 
 // Metadata holds the options a Spring Initializr instance offers.
 type Metadata struct {
+	DefaultGroupID     string
 	JavaVersions       []string
 	DefaultJavaVersion string
 	Dependencies       []Dependency
@@ -25,6 +26,9 @@ type Dependency struct {
 }
 
 type metadataResponse struct {
+	GroupID struct {
+		Default string `json:"default"`
+	} `json:"groupId"`
 	JavaVersion struct {
 		Default string `json:"default"`
 		Values  []struct {
@@ -56,7 +60,10 @@ func (c *Client) Metadata(ctx context.Context) (Metadata, error) {
 		return Metadata{}, fmt.Errorf("decode metadata: %w", err)
 	}
 
-	md := Metadata{DefaultJavaVersion: raw.JavaVersion.Default}
+	md := Metadata{
+		DefaultGroupID:     raw.GroupID.Default,
+		DefaultJavaVersion: raw.JavaVersion.Default,
+	}
 	for _, v := range raw.JavaVersion.Values {
 		md.JavaVersions = append(md.JavaVersions, v.ID)
 	}

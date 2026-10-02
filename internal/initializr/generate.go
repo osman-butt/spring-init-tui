@@ -14,11 +14,40 @@ import (
 
 const maxArchiveBytes = 64 << 20
 
-// Request describes the project to generate.
+// Request describes the project to generate. Name is also used as the
+// Maven artifactId. GroupID and PackageName are optional: Initializr falls
+// back to its own defaults when they are empty.
 type Request struct {
 	Name         string
+	GroupID      string
+	PackageName  string
 	JavaVersion  string
 	Dependencies []string
+}
+
+// PackageName returns the base Java package for a project: the group
+// followed by the artifact in lower case, without the characters a package
+// name cannot contain. Initializr's own default replaces those with
+// underscores ("spring-demo" becomes "spring_demo"); this drops them
+// ("springdemo").
+func PackageName(groupID, artifactID string) string {
+	var segment strings.Builder
+	for _, r := range strings.ToLower(artifactID) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			segment.WriteRune(r)
+		}
+	}
+	name := segment.String()
+	switch {
+	case name == "":
+		return groupID
+	case name[0] >= '0' && name[0] <= '9':
+		name = "_" + name // an identifier cannot start with a digit
+	}
+	if groupID == "" {
+		return name
+	}
+	return groupID + "." + name
 }
 
 // Generate downloads a Maven project for req and extracts it into dest,
@@ -51,6 +80,12 @@ func (c *Client) download(ctx context.Context, req Request) ([]byte, error) {
 	q.Set("type", "maven-project")
 	q.Set("artifactId", req.Name)
 	q.Set("name", req.Name)
+	if req.GroupID != "" {
+		q.Set("groupId", req.GroupID)
+	}
+	if req.PackageName != "" {
+		q.Set("packageName", req.PackageName)
+	}
 	q.Set("javaVersion", req.JavaVersion)
 	if len(req.Dependencies) > 0 {
 		q.Set("dependencies", strings.Join(req.Dependencies, ","))

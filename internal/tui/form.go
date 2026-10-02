@@ -17,10 +17,24 @@ import (
 // The name becomes both the Maven artifactId and the project directory.
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
+// The group becomes the Maven groupId and the start of the Java package, so
+// it has to be made of valid package segments.
+var groupPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$`)
+
+// fallbackGroup is used when the metadata does not name a default group.
+const fallbackGroup = "com.example"
+
 func newNameInput() textinput.Model {
 	input := textinput.New()
 	input.Placeholder = "demo"
 	input.CharLimit = 64
+	return input
+}
+
+func newGroupInput() textinput.Model {
+	input := textinput.New()
+	input.Placeholder = fallbackGroup
+	input.CharLimit = 100
 	return input
 }
 
@@ -53,8 +67,8 @@ func (m Model) updateName(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.name = name
 			m.input.Blur()
-			m.setScreen(screenJava)
-			return m, nil
+			m.setScreen(screenGroup)
+			return m, m.group.Focus()
 		}
 		m.nameErr = nil
 	}
@@ -63,6 +77,49 @@ func (m Model) updateName(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+}
+
+func validateGroup(group string) error {
+	switch {
+	case group == "":
+		return errors.New("enter a group, for example " + fallbackGroup)
+	case !groupPattern.MatchString(group):
+		return errors.New("use dot-separated names made of letters, digits and '_', for example " + fallbackGroup)
+	}
+	return nil
+}
+
+func (m Model) updateGroup(msg tea.Msg) (Model, tea.Cmd) {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Matches(k, m.keys.Back):
+			m.group.Blur()
+			m.setScreen(screenName)
+			return m, m.input.Focus()
+		case key.Matches(k, m.keys.Next):
+			group := strings.TrimSpace(m.group.Value())
+			if m.groupErr = validateGroup(group); m.groupErr != nil {
+				return m, nil
+			}
+			m.groupID = group
+			m.group.Blur()
+			m.setScreen(screenJava)
+			return m, nil
+		}
+		m.groupErr = nil
+	}
+
+	var cmd tea.Cmd
+	m.group, cmd = m.group.Update(msg)
+	return m, cmd
+}
+
+func (m Model) groupView() string {
+	lines := []string{m.styles.header.Render("Group"), m.group.View()}
+	if m.groupErr != nil {
+		lines = append(lines, m.styles.err.Width(m.width).Render(m.groupErr.Error()))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) nameView() string {
@@ -99,8 +156,8 @@ func (m Model) updateJava(msg tea.Msg) (Model, tea.Cmd) {
 	case key.Matches(k, m.keys.Next):
 		m.setScreen(screenDeps)
 	case key.Matches(k, m.keys.Back):
-		m.setScreen(screenName)
-		return m, m.input.Focus()
+		m.setScreen(screenGroup)
+		return m, m.group.Focus()
 	case key.Matches(k, m.keys.Quit):
 		return m.quit()
 	}
@@ -163,6 +220,8 @@ func (m Model) summaryView() string {
 	label := m.styles.subtle.Render
 	return strings.Join([]string{
 		label("Project       ") + m.name,
+		label("Group         ") + m.groupID,
+		label("Package       ") + m.request().PackageName,
 		label("Java          ") + m.javaVersion(),
 		// Wrap a long list under its own column instead of cutting it off.
 		lipgloss.JoinHorizontal(lipgloss.Top, label("Dependencies  "),

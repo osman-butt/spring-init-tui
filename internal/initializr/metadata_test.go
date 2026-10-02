@@ -46,6 +46,9 @@ func TestMetadata(t *testing.T) {
 	if want := []string{"27", "25", "21", "17"}; !slices.Equal(md.JavaVersions, want) {
 		t.Errorf("JavaVersions = %v, want %v", md.JavaVersions, want)
 	}
+	if md.DefaultGroupID != "com.example" {
+		t.Errorf("DefaultGroupID = %q, want %q", md.DefaultGroupID, "com.example")
+	}
 	if md.DefaultJavaVersion != "17" {
 		t.Errorf("DefaultJavaVersion = %q, want %q", md.DefaultJavaVersion, "17")
 	}

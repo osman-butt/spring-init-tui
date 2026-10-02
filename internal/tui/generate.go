@@ -12,6 +12,8 @@ import (
 func (m Model) request() initializr.Request {
 	return initializr.Request{
 		Name:         m.name,
+		GroupID:      m.groupID,
+		PackageName:  initializr.PackageName(m.groupID, m.name),
 		JavaVersion:  m.javaVersion(),
 		Dependencies: m.selectedDeps(),
 	}

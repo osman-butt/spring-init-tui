@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"cmp"
 	"context"
 
 	"charm.land/bubbles/v2/help"
@@ -26,6 +27,7 @@ type screen int
 const (
 	screenLoading screen = iota
 	screenName
+	screenGroup
 	screenJava
 	screenDeps
 	screenConfirm
@@ -58,6 +60,8 @@ type Model struct {
 	// Answers collected so far.
 	name       string
 	nameErr    error
+	groupID    string
+	groupErr   error
 	javaCursor int
 	selected   map[string]bool // dependency IDs
 	confirmYes bool
@@ -68,7 +72,8 @@ type Model struct {
 	keys    keyMap
 	help    help.Model
 	spinner spinner.Model
-	input   textinput.Model
+	input   textinput.Model // project name
+	group   textinput.Model
 	deps    list.Model
 	styles  styles
 }
@@ -88,6 +93,7 @@ func New(backend Backend) Model {
 		help:    help.New(),
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 		input:   newNameInput(),
+		group:   newGroupInput(),
 		deps:    newDepsList(),
 	}
 	m.setStyles(true) // replaced once tea.BackgroundColorMsg arrives
@@ -157,6 +163,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case metadataLoadedMsg:
 		m.metadata = msg.metadata
+		m.group.SetValue(cmp.Or(msg.metadata.DefaultGroupID, fallbackGroup))
 		m.javaCursor = m.defaultJavaIndex()
 		m.setScreen(screenName)
 		return m, tea.Batch(m.input.Focus(), m.deps.SetItems(depItems(msg.metadata.Dependencies)))
@@ -177,6 +184,8 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.updateLoading(msg)
 	case screenName:
 		return m.updateName(msg)
+	case screenGroup:
+		return m.updateGroup(msg)
 	case screenJava:
 		return m.updateJava(msg)
 	case screenDeps:
@@ -250,7 +259,7 @@ func (m *Model) syncKeys() {
 	k.ApplyFilter.SetEnabled(typingFilter)
 	k.CancelFilter.SetEnabled(typingFilter)
 	k.ClearFilter.SetEnabled(filterApplied)
-	k.Next.SetEnabled(s == screenName || s == screenJava || browsingDeps)
+	k.Next.SetEnabled(s == screenName || s == screenGroup || s == screenJava || browsingDeps)
 	k.Switch.SetEnabled(s == screenConfirm)
 	k.Confirm.SetEnabled(s == screenConfirm)
 	k.Yes.SetEnabled(s == screenConfirm)
@@ -258,10 +267,13 @@ func (m *Model) syncKeys() {
 	// From the error screen there is only a way back when the answers
 	// exist, i.e. when generating failed rather than loading.
 	generateFailed := s == screenError && m.failed == screenGenerating
-	k.Back.SetEnabled(s == screenJava || s == screenConfirm || (browsingDeps && !filterApplied) || generateFailed)
+	k.Back.SetEnabled(s == screenGroup || s == screenJava || s == screenConfirm || (browsingDeps && !filterApplied) || generateFailed)
 	k.Retry.SetEnabled(s == screenError)
+	// "q" is text on the screens with an input, and esc is taken by Back on
+	// the group screen, which leaves ctrl+c as the only way out there.
 	k.Cancel.SetEnabled(s == screenName)
-	k.Quit.SetEnabled(s != screenName && !typingFilter)
+	k.Quit.SetEnabled(s != screenName && s != screenGroup && !typingFilter)
+	k.Interrupt.SetEnabled(s == screenGroup)
 }
 
 func (m *Model) setStyles(isDark bool) {
@@ -272,6 +284,7 @@ func (m *Model) setStyles(isDark bool) {
 	inputStyles := textinput.DefaultStyles(isDark)
 	inputStyles.Focused.Prompt = m.styles.selected
 	m.input.SetStyles(inputStyles)
+	m.group.SetStyles(inputStyles)
 
 	// Drop the list's default indentation so it lines up with the other
 	// screens.
@@ -291,7 +304,9 @@ func (m *Model) setStyles(isDark bool) {
 func (m *Model) resize() {
 	m.help.SetWidth(m.width)
 	// Leave room for the prompt and the cursor.
-	m.input.SetWidth(max(m.width-len(m.input.Prompt)-1, 1))
+	inputWidth := max(m.width-len(m.input.Prompt)-1, 1)
+	m.input.SetWidth(inputWidth)
+	m.group.SetWidth(inputWidth)
 
 	const blankLines = 3 // below the banner, above the footer, end of frame
 	chrome := lipgloss.Height(m.bannerView()) + depsFooterHeight + lipgloss.Height(m.footerView()) + blankLines
@@ -324,6 +339,8 @@ func (m Model) content() string {
 		body = m.spinner.View() + "Fetching metadata…" // Dot frames end with a space
 	case screenName:
 		body = m.nameView()
+	case screenGroup:
+		body = m.groupView()
 	case screenJava:
 		body = m.javaView()
 	case screenDeps:

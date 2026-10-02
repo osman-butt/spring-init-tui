@@ -38,6 +38,7 @@ func (f *fakeBackend) Generate(_ context.Context, req initializr.Request, dest s
 }
 
 var testMetadata = initializr.Metadata{
+	DefaultGroupID:     "com.example",
 	JavaVersions:       []string{"25", "21", "17"},
 	DefaultJavaVersion: "17",
 	Dependencies: []initializr.Dependency{
@@ -64,6 +65,8 @@ func press(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyRight}
 	case "tab":
 		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "backspace":
+		return tea.KeyPressMsg{Code: tea.KeyBackspace}
 	case "space":
 		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
@@ -329,14 +332,132 @@ func TestNameAcceptsLettersThatAreShortcutsElsewhere(t *testing.T) {
 func TestNameIsTrimmed(t *testing.T) {
 	m := typeText(t, loaded(t), " my-app_1.0 ")
 	m = keys(t, m, "enter")
-	if m.screen != screenJava || m.name != "my-app_1.0" {
-		t.Errorf("screen = %v, name = %q; want java screen with %q", m.screen, m.name, "my-app_1.0")
+	if m.screen != screenGroup || m.name != "my-app_1.0" {
+		t.Errorf("screen = %v, name = %q; want group screen with %q", m.screen, m.name, "my-app_1.0")
+	}
+}
+
+// onGroup returns a model on the group screen for project "demo".
+func onGroup(t *testing.T) Model {
+	t.Helper()
+	m, cmd := step(t, typeText(t, loaded(t), "demo"), press("enter"))
+	if m.screen != screenGroup {
+		t.Fatalf("screen = %v, want group", m.screen)
+	}
+	if !m.group.Focused() || m.input.Focused() || cmd == nil {
+		t.Fatal("the group input should have taken the focus from the name input")
+	}
+	return m
+}
+
+// replaceGroup clears the prefilled group and types a new one.
+func replaceGroup(t *testing.T, m Model, group string) Model {
+	t.Helper()
+	for range m.group.Value() {
+		m = keys(t, m, "backspace")
+	}
+	return typeText(t, m, group)
+}
+
+func TestGroupIsPrefilledFromMetadata(t *testing.T) {
+	m := onGroup(t)
+	if got := m.group.Value(); got != "com.example" {
+		t.Errorf("group input = %q, want the metadata default com.example", got)
+	}
+	out := plain(m)
+	if !strings.Contains(out, "Group") || !strings.Contains(out, "com.example") {
+		t.Errorf("group view should show its header and the default:\n%s", out)
+	}
+
+	m = keys(t, m, "enter")
+	if m.screen != screenJava || m.groupID != "com.example" {
+		t.Errorf("screen = %v, groupID = %q; want java screen with com.example", m.screen, m.groupID)
+	}
+}
+
+func TestGroupFallsBackWithoutMetadataDefault(t *testing.T) {
+	m := New(&fakeBackend{})
+	m, _ = step(t, m, metadataLoadedMsg{initializr.Metadata{JavaVersions: []string{"21"}}})
+	if got := m.group.Value(); got != "com.example" {
+		t.Errorf("group input = %q, want the fallback com.example", got)
+	}
+}
+
+func TestGroupValidation(t *testing.T) {
+	tests := []struct {
+		name, input, wantErr string
+	}{
+		{name: "empty", input: "", wantErr: "enter a group"},
+		{name: "hyphen", input: "com.my-company", wantErr: "use dot-separated names"},
+		{name: "empty segment", input: "com..example", wantErr: "use dot-separated names"},
+		{name: "trailing dot", input: "com.example.", wantErr: "use dot-separated names"},
+		{name: "segment starts with a digit", input: "com.1example", wantErr: "use dot-separated names"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := keys(t, replaceGroup(t, onGroup(t), tt.input), "enter")
+			if m.screen != screenGroup {
+				t.Fatalf("screen = %v, want to stay on group", m.screen)
+			}
+			if out := plain(m); !strings.Contains(out, tt.wantErr) {
+				t.Errorf("view should explain the problem (%q):\n%s", tt.wantErr, out)
+			}
+
+			m = typeText(t, m, "x")
+			if m.groupErr != nil {
+				t.Errorf("groupErr = %v, want it cleared after typing", m.groupErr)
+			}
+		})
+	}
+}
+
+func TestGroupAcceptsLettersThatAreShortcutsElsewhere(t *testing.T) {
+	m := typeText(t, replaceGroup(t, onGroup(t), ""), "qjk.r")
+	if m.screen != screenGroup || m.group.Value() != "qjk.r" {
+		t.Errorf("screen = %v, group = %q; want group screen with %q", m.screen, m.group.Value(), "qjk.r")
+	}
+	out := plain(m)
+	if strings.Contains(out, "q quit") || !strings.Contains(out, "ctrl+c quit") {
+		t.Errorf("footer should offer ctrl+c, not q, while typing:\n%s", out)
+	}
+}
+
+func TestPackageIsDerivedFromGroupAndName(t *testing.T) {
+	backend := &fakeBackend{metadata: testMetadata}
+	m := New(backend)
+	m.exists = func(string) bool { return false }
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
+	m = keys(t, typeText(t, m, "spring-demo"), "enter")
+	m = keys(t, replaceGroup(t, m, " dev.osman "), "enter", "enter", "enter")
+	if m.screen != screenConfirm {
+		t.Fatalf("screen = %v, want confirm", m.screen)
+	}
+
+	out := plain(m)
+	for _, want := range []string{"spring-demo", "dev.osman", "dev.osman.springdemo"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary is missing %q:\n%s", want, out)
+		}
+	}
+
+	m.generateCmd()()
+	want := initializr.Request{
+		Name:        "spring-demo",
+		GroupID:     "dev.osman",
+		PackageName: "dev.osman.springdemo",
+		JavaVersion: "17",
+	}
+	if len(backend.requests) != 1 || !reflect.DeepEqual(backend.requests[0], want) {
+		t.Errorf("Generate requests = %+v, want [%+v]", backend.requests, want)
+	}
+	if !slices.Equal(backend.dests, []string{"spring-demo"}) {
+		t.Errorf("Generate dests = %v, want [spring-demo]", backend.dests)
 	}
 }
 
 func TestJavaVersionSelection(t *testing.T) {
-	m := typeText(t, loaded(t), "demo")
-	m = keys(t, m, "enter")
+	m := keys(t, onGroup(t), "enter")
 	if m.screen != screenJava {
 		t.Fatalf("screen = %v, want java", m.screen)
 	}
@@ -382,8 +503,7 @@ func TestJavaDefaultFallsBackToFirstVersion(t *testing.T) {
 }
 
 func TestBackNavigation(t *testing.T) {
-	m := typeText(t, loaded(t), "demo")
-	m = keys(t, m, "enter", "up", "enter", "space", "enter")
+	m := keys(t, replaceGroup(t, onGroup(t), "dev.osman"), "enter", "up", "enter", "space", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
@@ -399,10 +519,18 @@ func TestBackNavigation(t *testing.T) {
 	}
 
 	m, cmd := step(t, m, press("esc"))
-	if m.screen != screenName || m.input.Value() != "demo" {
-		t.Fatalf("esc on java: screen = %v, input = %q; want name screen with demo", m.screen, m.input.Value())
+	if m.screen != screenGroup || m.group.Value() != "dev.osman" {
+		t.Fatalf("esc on java: screen = %v, group = %q; want group screen with dev.osman", m.screen, m.group.Value())
 	}
-	if !m.input.Focused() || cmd == nil {
+	if !m.group.Focused() || cmd == nil {
+		t.Error("the group input should be focused again")
+	}
+
+	m, cmd = step(t, m, press("esc"))
+	if m.screen != screenName || m.input.Value() != "demo" {
+		t.Fatalf("esc on group: screen = %v, input = %q; want name screen with demo", m.screen, m.input.Value())
+	}
+	if !m.input.Focused() || m.group.Focused() || cmd == nil {
 		t.Error("the name input should be focused again")
 	}
 
@@ -411,7 +539,7 @@ func TestBackNavigation(t *testing.T) {
 }
 
 func TestQuitFromFormScreens(t *testing.T) {
-	m := typeText(t, loaded(t), "demo")
+	m := onGroup(t)
 	for _, screen := range []screen{screenJava, screenDeps, screenConfirm} {
 		m = keys(t, m, "enter")
 		if m.screen != screen {
@@ -425,8 +553,7 @@ func TestQuitFromFormScreens(t *testing.T) {
 // onDeps returns a model on the dependency screen.
 func onDeps(t *testing.T) Model {
 	t.Helper()
-	m := typeText(t, loaded(t), "demo")
-	m = keys(t, m, "enter", "enter")
+	m := keys(t, onGroup(t), "enter", "enter")
 	if m.screen != screenDeps {
 		t.Fatalf("screen = %v, want deps", m.screen)
 	}
@@ -514,7 +641,7 @@ func TestDepsFilterByTyping(t *testing.T) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter")
 	if m.deps.Paginator.TotalPages < 2 {
 		t.Fatalf("test needs several pages, got %d", m.deps.Paginator.TotalPages)
 	}
@@ -598,7 +725,7 @@ func TestSummaryShowsAnswers(t *testing.T) {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
 	out := plain(m)
-	for _, want := range []string{"demo", "17", "web, data-jpa"} {
+	for _, want := range []string{"demo", "com.example", "com.example.demo", "17", "web, data-jpa"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary is missing %q:\n%s", want, out)
 		}
@@ -614,7 +741,7 @@ func onConfirm(t *testing.T) (Model, *fakeBackend) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "space", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "space", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want confirm", m.screen)
 	}
@@ -639,7 +766,13 @@ func TestConfirmYesGeneratesTheProject(t *testing.T) {
 	if _, ok := msg.(generatedMsg); !ok {
 		t.Fatalf("generateCmd() = %#v, want generatedMsg", msg)
 	}
-	want := initializr.Request{Name: "demo", JavaVersion: "17", Dependencies: []string{"web"}}
+	want := initializr.Request{
+		Name:         "demo",
+		GroupID:      "com.example",
+		PackageName:  "com.example.demo",
+		JavaVersion:  "17",
+		Dependencies: []string{"web"},
+	}
 	if len(backend.requests) != 1 || !reflect.DeepEqual(backend.requests[0], want) {
 		t.Errorf("Generate requests = %+v, want [%+v]", backend.requests, want)
 	}
@@ -835,6 +968,11 @@ func TestViewFitsWindow(t *testing.T) {
 		m = typeText(t, m, longName)
 		check("long name", m)
 		m = keys(t, m, "enter")
+		check("group", m)
+		check("invalid group", keys(t, typeText(t, m, "-"), "enter"))
+		m = typeText(t, m, strings.Repeat(".long", 15))
+		check("long group", m)
+		m = keys(t, m, "enter")
 		check("java", m)
 		m = keys(t, m, "enter")
 		check("deps", m)
@@ -862,7 +1000,7 @@ func TestDepsListHeightStaysTheSame(t *testing.T) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter")
 
 	want := lipgloss.Height(m.View().Content)
 	last := keys(t, m, "G")
