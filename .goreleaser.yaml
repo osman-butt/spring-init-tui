@@ -1,0 +1,49 @@
+# GoReleaser builds the release archives when a v* tag is pushed
+# (see .github/workflows/release.yml). Try it locally without publishing:
+#
+#   goreleaser release --snapshot --clean
+version: 2
+
+project_name: spring-init-tui
+
+builds:
+  - id: si
+    main: ./cmd/si
+    binary: si
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    # Same input, same binary: use the commit time instead of the build time.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
