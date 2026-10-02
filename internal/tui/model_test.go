@@ -150,7 +150,7 @@ func TestLoadingShowsSpinnerText(t *testing.T) {
 		t.Fatalf("screen = %v, want loading", m.screen)
 	}
 	out := plain(m)
-	for _, want := range []string{"SPRING INITIALIZR", "Build. Configure. Generate.", "Fetching metadata"} {
+	for _, want := range []string{"I N I T I A L I Z R", "Fetching metadata"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view is missing %q:\n%s", want, out)
 		}

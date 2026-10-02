@@ -77,6 +77,9 @@ type Model struct {
 	search  textinput.Model // dependency search
 	deps    list.Model
 	styles  styles
+
+	// Rendered in setStyles; bannerView picks the one that fits.
+	banner, compactBanner string
 }
 
 // New returns a model that loads its options from backend.
@@ -278,6 +281,8 @@ func (m *Model) syncKeys() {
 
 func (m *Model) setStyles(isDark bool) {
 	m.styles = newStyles(isDark)
+	m.banner = renderBanner(isDark)
+	m.compactBanner = renderCompactBanner(isDark)
 	m.help.Styles = help.DefaultStyles(isDark)
 	m.spinner.Style = m.styles.spinner
 
@@ -357,18 +362,6 @@ func (m Model) content() string {
 	// MaxWidth cuts off anything a screen failed to fit, so a narrow
 	// terminal never wraps lines behind the renderer's back.
 	return lipgloss.NewStyle().MaxWidth(m.width).Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
-}
-
-func (m Model) bannerView() string {
-	title := m.styles.title.Render("SPRING INITIALIZR")
-	banner := m.styles.banner.Render(lipgloss.JoinVertical(lipgloss.Left,
-		title,
-		m.styles.tagline.Render("Build. Configure. Generate."),
-	))
-	if m.width > 0 && lipgloss.Width(banner) > m.width {
-		return title
-	}
-	return banner
 }
 
 func (m Model) footerView() string {
