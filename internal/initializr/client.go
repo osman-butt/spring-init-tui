@@ -4,7 +4,9 @@ package initializr
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 )
@@ -44,8 +46,21 @@ func (c *Client) get(ctx context.Context, url, accept string) (*http.Response, e
 		return nil, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
-		return nil, fmt.Errorf("unexpected status %s", resp.Status)
+		defer resp.Body.Close()
+		return nil, statusError(resp)
 	}
 	return resp, nil
+}
+
+// statusError includes the "message" field Initializr sends with error
+// responses, e.g. "Unknown dependency 'x' check project metadata".
+func statusError(resp *http.Response) error {
+	var body struct {
+		Message string `json:"message"`
+	}
+	json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
+	if body.Message != "" {
+		return fmt.Errorf("unexpected status %s: %s", resp.Status, body.Message)
+	}
+	return fmt.Errorf("unexpected status %s", resp.Status)
 }
