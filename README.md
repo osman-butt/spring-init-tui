@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/osman-butt/spring-init-tui)](https://github.com/osman-butt/spring-init-tui/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-`si` is a terminal UI for [Spring Initializr](https://start.spring.io). Choose a project name, group, Java version and dependencies, and it generates a ready-to-run Maven project.
+`si` is a terminal UI for [Spring Initializr](https://start.spring.io). Choose an artifact, group, package name, Spring Boot version, Java version and dependencies, and it generates a ready-to-run Maven project.
 
 ![Generating a Spring Boot project with si](demo/si.gif)
 
