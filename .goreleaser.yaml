@@ -53,14 +53,17 @@ homebrew_casks:
     description: Terminal UI for Spring Initializr
     binaries:
       - si
-    hooks:
-      post:
-        # The binary is not signed, so macOS would block it while the
-        # quarantine flag that Homebrew sets on casks is still there.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/si"]
-          end
+    # The binary is not signed, so macOS would block it while the quarantine
+    # flag that Homebrew sets on casks is still there. GoReleaser's own hook
+    # (hooks.post.install) writes a `postflight do` block, which Homebrew 7
+    # deprecates, so the `postflight_steps` stanza is written by hand. Steps
+    # run in the directory the cask was unpacked into.
+    custom_block: |
+      postflight_steps do
+        on_macos do
+          run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "si"], chdir: "."
+        end
+      end
 
 changelog:
   sort: asc
