@@ -39,6 +39,29 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# Publishes Casks/si.rb to the tap, so that this works:
+#
+#   brew install osman-butt/tap/si
+homebrew_casks:
+  - name: si
+    repository:
+      owner: osman-butt
+      name: homebrew-tap
+      # The workflow's own token cannot write to another repository.
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/osman-butt/spring-init-tui
+    description: Terminal UI for Spring Initializr
+    binaries:
+      - si
+    hooks:
+      post:
+        # The binary is not signed, so macOS would block it while the
+        # quarantine flag that Homebrew sets on casks is still there.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/si"]
+          end
+
 changelog:
   sort: asc
   filters:
