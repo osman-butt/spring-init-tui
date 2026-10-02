@@ -6,6 +6,7 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -25,6 +26,7 @@ const (
 	screenLoading screen = iota
 	screenName
 	screenJava
+	screenDeps
 	screenSummary
 	screenError
 )
@@ -37,20 +39,21 @@ type (
 
 // Model is the root Bubble Tea model.
 type Model struct {
-	screen      screen
-	backend     Backend
-	ctx         context.Context
-	cancel      context.CancelFunc
-	metadata    initializr.Metadata
-	err         error
-	quitting    bool
-	interrupted bool
-	width       int
+	screen        screen
+	backend       Backend
+	ctx           context.Context
+	cancel        context.CancelFunc
+	metadata      initializr.Metadata
+	err           error
+	quitting      bool
+	interrupted   bool
+	width, height int
 
 	// Answers collected so far.
 	name       string
 	nameErr    error
 	javaCursor int
+	selected   map[string]bool // dependency IDs
 
 	// exists reports whether a path is already taken. Tests replace it.
 	exists func(path string) bool
@@ -59,6 +62,7 @@ type Model struct {
 	help    help.Model
 	spinner spinner.Model
 	input   textinput.Model
+	deps    list.Model
 	styles  styles
 }
 
@@ -74,6 +78,7 @@ func New(backend Backend) Model {
 		help:    help.New(),
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 		input:   newNameInput(),
+		deps:    newDepsList(),
 	}
 	m.setStyles(true) // replaced once tea.BackgroundColorMsg arrives
 	m.setScreen(screenLoading)
@@ -106,12 +111,18 @@ func (m Model) loadCmd() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	// The dependency list changes which keys apply as its filter opens and
+	// closes, so refresh the bindings after every message.
+	next.syncKeys()
+	return next, cmd
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.help.SetWidth(msg.Width)
-		// Leave room for the prompt and the cursor.
-		m.input.SetWidth(max(msg.Width-len(m.input.Prompt)-1, 1))
+		m.width, m.height = msg.Width, msg.Height
+		m.resize()
 		return m, nil
 
 	case tea.BackgroundColorMsg:
@@ -132,7 +143,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.metadata = msg.metadata
 		m.javaCursor = m.defaultJavaIndex()
 		m.setScreen(screenName)
-		return m, m.input.Focus()
+		return m, tea.Batch(m.input.Focus(), m.deps.SetItems(depItems(msg.metadata.Dependencies)))
 
 	case loadFailedMsg:
 		m.err = msg.err
@@ -147,6 +158,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateName(msg)
 	case screenJava:
 		return m.updateJava(msg)
+	case screenDeps:
+		return m.updateDeps(msg)
 	case screenSummary:
 		return m.updateSummary(msg)
 	case screenError:
@@ -155,7 +168,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateLoading(msg tea.Msg) (Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyPressMsg); ok && key.Matches(k, m.keys.Quit) {
 		return m.quit()
 	}
@@ -164,7 +177,7 @@ func (m Model) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m Model) updateError(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateError(msg tea.Msg) (Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyPressMsg); ok {
 		switch {
 		case key.Matches(k, m.keys.Retry):
@@ -178,18 +191,34 @@ func (m Model) updateError(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// setScreen switches screens and enables only the bindings that apply there,
-// which keeps the help footer accurate.
 func (m *Model) setScreen(s screen) {
 	m.screen = s
+	m.syncKeys()
+}
+
+// syncKeys enables only the bindings that apply right now, which keeps the
+// help footer accurate and stops stray keys from triggering hidden actions.
+func (m *Model) syncKeys() {
+	s := m.screen
+	filter := m.deps.FilterState()
+	typingFilter := s == screenDeps && filter == list.Filtering
+	browsingDeps := s == screenDeps && !typingFilter
+	filterApplied := browsingDeps && filter == list.FilterApplied
+
 	k := &m.keys
-	k.Up.SetEnabled(s == screenJava)
-	k.Down.SetEnabled(s == screenJava)
-	k.Next.SetEnabled(s == screenName || s == screenJava)
-	k.Back.SetEnabled(s == screenJava || s == screenSummary)
+	k.Up.SetEnabled(s == screenJava || browsingDeps)
+	k.Down.SetEnabled(s == screenJava || browsingDeps)
+	k.Move.SetEnabled(s == screenJava || browsingDeps)
+	k.Toggle.SetEnabled(browsingDeps)
+	k.Filter.SetEnabled(browsingDeps)
+	k.ApplyFilter.SetEnabled(typingFilter)
+	k.CancelFilter.SetEnabled(typingFilter)
+	k.ClearFilter.SetEnabled(filterApplied)
+	k.Next.SetEnabled(s == screenName || s == screenJava || browsingDeps)
+	k.Back.SetEnabled(s == screenJava || s == screenSummary || (browsingDeps && !filterApplied))
 	k.Retry.SetEnabled(s == screenError)
 	k.Cancel.SetEnabled(s == screenName)
-	k.Quit.SetEnabled(s != screenName)
+	k.Quit.SetEnabled(s != screenName && !typingFilter)
 }
 
 func (m *Model) setStyles(isDark bool) {
@@ -200,9 +229,33 @@ func (m *Model) setStyles(isDark bool) {
 	inputStyles := textinput.DefaultStyles(isDark)
 	inputStyles.Focused.Prompt = m.styles.selected
 	m.input.SetStyles(inputStyles)
+
+	// Drop the list's default indentation so it lines up with the other
+	// screens.
+	listStyles := list.DefaultStyles(isDark)
+	listStyles.TitleBar = lipgloss.NewStyle()
+	listStyles.Title = m.styles.header
+	listStyles.StatusBar = m.styles.subtle
+	listStyles.Filter.Focused.Prompt = m.styles.selected
+	listStyles.Filter.Blurred.Prompt = m.styles.selected
+	m.deps.Styles = listStyles
+	m.deps.FilterInput.SetStyles(listStyles.Filter)
+	m.syncDepsDelegate()
 }
 
-func (m Model) quit() (tea.Model, tea.Cmd) {
+// resize fits the components to the terminal. The dependency list gets the
+// rows left over after everything else on its screen.
+func (m *Model) resize() {
+	m.help.SetWidth(m.width)
+	// Leave room for the prompt and the cursor.
+	m.input.SetWidth(max(m.width-len(m.input.Prompt)-1, 1))
+
+	const blankLines = 3 // below the banner, above the footer, end of frame
+	chrome := lipgloss.Height(m.bannerView()) + depsFooterHeight + lipgloss.Height(m.footerView()) + blankLines
+	m.deps.SetSize(m.width, min(max(m.height-chrome, 4), depsMaxHeight))
+}
+
+func (m Model) quit() (Model, tea.Cmd) {
 	m.cancel()
 	m.quitting = true
 	return m, tea.Quit
@@ -229,6 +282,8 @@ func (m Model) content() string {
 		body = m.nameView()
 	case screenJava:
 		body = m.javaView()
+	case screenDeps:
+		body = m.depsView()
 	case screenSummary:
 		body = m.summaryView()
 	case screenError:
@@ -237,7 +292,7 @@ func (m Model) content() string {
 
 	parts := []string{m.bannerView(), "", body}
 	if !m.quitting {
-		parts = append(parts, "", m.help.View(m.keys))
+		parts = append(parts, "", m.footerView())
 	}
 	// MaxWidth cuts off anything a screen failed to fit, so a narrow
 	// terminal never wraps lines behind the renderer's back.
@@ -254,4 +309,8 @@ func (m Model) bannerView() string {
 		return title
 	}
 	return banner
+}
+
+func (m Model) footerView() string {
+	return m.help.View(m.keys)
 }

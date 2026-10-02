@@ -11,6 +11,7 @@ import (
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // The name becomes both the Maven artifactId and the project directory.
@@ -40,7 +41,7 @@ func (m Model) validateName(name string) error {
 	return nil
 }
 
-func (m Model) updateName(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateName(msg tea.Msg) (Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyPressMsg); ok {
 		switch {
 		case key.Matches(k, m.keys.Cancel):
@@ -85,7 +86,7 @@ func (m Model) javaVersion() string {
 	return ""
 }
 
-func (m Model) updateJava(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateJava(msg tea.Msg) (Model, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
@@ -96,7 +97,7 @@ func (m Model) updateJava(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case key.Matches(k, m.keys.Down):
 		m.javaCursor = min(m.javaCursor+1, len(m.metadata.JavaVersions)-1)
 	case key.Matches(k, m.keys.Next):
-		m.setScreen(screenSummary)
+		m.setScreen(screenDeps)
 	case key.Matches(k, m.keys.Back):
 		m.setScreen(screenName)
 		return m, m.input.Focus()
@@ -118,14 +119,14 @@ func (m Model) javaView() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) updateSummary(msg tea.Msg) (Model, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
 	switch {
 	case key.Matches(k, m.keys.Back):
-		m.setScreen(screenJava)
+		m.setScreen(screenDeps)
 	case key.Matches(k, m.keys.Quit):
 		return m.quit()
 	}
@@ -133,8 +134,16 @@ func (m Model) updateSummary(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) summaryView() string {
+	deps := "none"
+	if ids := m.selectedDeps(); len(ids) > 0 {
+		deps = strings.Join(ids, ", ")
+	}
+	label := m.styles.subtle.Render
 	return strings.Join([]string{
-		m.styles.subtle.Render("Project  ") + m.name,
-		m.styles.subtle.Render("Java     ") + m.javaVersion(),
+		label("Project       ") + m.name,
+		label("Java          ") + m.javaVersion(),
+		// Wrap a long list under its own column instead of cutting it off.
+		lipgloss.JoinHorizontal(lipgloss.Top, label("Dependencies  "),
+			lipgloss.NewStyle().Width(max(m.width-14, 10)).Render(deps)),
 	}, "\n")
 }

@@ -3,9 +3,14 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -42,8 +47,19 @@ func press(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyUp}
 	case "down":
 		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
 	return tea.KeyPressMsg{Code: []rune(s)[0], Text: s}
+}
+
+var ansiSequence = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// plain returns the rendered view without colours and text styles.
+func plain(m Model) string {
+	return ansiSequence.ReplaceAllString(m.View().Content, "")
 }
 
 // step runs Update and asserts the returned model type.
@@ -64,6 +80,31 @@ func keys(t *testing.T, m Model, keys ...string) Model {
 		m, _ = step(t, m, press(k))
 	}
 	return m
+}
+
+// settle runs cmd and feeds what it produces back into the model, the way
+// the Bubble Tea runtime would. Commands that take a while, such as cursor
+// blink timers, are skipped.
+func settle(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	done := make(chan tea.Msg, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msg := <-done:
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, c := range batch {
+				m = settle(t, m, c)
+			}
+			return m
+		}
+		next, nextCmd := step(t, m, msg)
+		return settle(t, next, nextCmd)
+	case <-time.After(50 * time.Millisecond):
+		return m
+	}
 }
 
 func typeText(t *testing.T, m Model, text string) Model {
@@ -113,7 +154,7 @@ func TestLoadingShowsSpinnerText(t *testing.T) {
 	if m.screen != screenLoading {
 		t.Fatalf("screen = %v, want loading", m.screen)
 	}
-	out := m.View().Content
+	out := plain(m)
 	for _, want := range []string{"SPRING INITIALIZR", "Build. Configure. Generate.", "Fetching metadata"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("view is missing %q:\n%s", want, out)
@@ -130,8 +171,8 @@ func TestMetadataLoadedShowsNameScreen(t *testing.T) {
 	if !m.input.Focused() || cmd == nil {
 		t.Error("the name input should be focused and return its blink command")
 	}
-	if !strings.Contains(m.View().Content, "Project") {
-		t.Errorf("name view is missing its header:\n%s", m.View().Content)
+	if !strings.Contains(plain(m), "Project") {
+		t.Errorf("name view is missing its header:\n%s", plain(m))
 	}
 }
 
@@ -141,7 +182,7 @@ func TestLoadFailureCanBeRetried(t *testing.T) {
 	if m.screen != screenError {
 		t.Fatalf("screen = %v, want error", m.screen)
 	}
-	out := m.View().Content
+	out := plain(m)
 	if !strings.Contains(out, "boom") || !strings.Contains(out, "retry") {
 		t.Errorf("error view should show the message and the retry key:\n%s", out)
 	}
@@ -153,7 +194,7 @@ func TestLoadFailureCanBeRetried(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("retry returned no command")
 	}
-	if strings.Contains(m.View().Content, "retry") {
+	if strings.Contains(plain(m), "retry") {
 		t.Error("retry key should not be offered while loading")
 	}
 }
@@ -192,7 +233,7 @@ func TestQuitFromErrorKeepsTheError(t *testing.T) {
 	if m.Err() == nil {
 		t.Error("Err() = nil, want the load error")
 	}
-	out := m.View().Content
+	out := plain(m)
 	if !strings.Contains(out, "boom") {
 		t.Errorf("final view should keep the error:\n%s", out)
 	}
@@ -242,7 +283,7 @@ func TestNameValidation(t *testing.T) {
 			if m.screen != screenName {
 				t.Fatalf("screen = %v, want to stay on name", m.screen)
 			}
-			if out := m.View().Content; !strings.Contains(out, tt.wantErr) {
+			if out := plain(m); !strings.Contains(out, tt.wantErr) {
 				t.Errorf("view should explain the problem (%q):\n%s", tt.wantErr, out)
 			}
 		})
@@ -265,7 +306,7 @@ func TestNameAcceptsLettersThatAreShortcutsElsewhere(t *testing.T) {
 	if m.screen != screenName || m.input.Value() != "qjkr" {
 		t.Errorf("screen = %v, input = %q; want name screen with %q", m.screen, m.input.Value(), "qjkr")
 	}
-	if out := m.View().Content; strings.Contains(out, "q quit") {
+	if out := plain(m); strings.Contains(out, "q quit") {
 		t.Errorf("q should not be offered as quit while typing:\n%s", out)
 	}
 }
@@ -304,17 +345,13 @@ func TestJavaVersionSelection(t *testing.T) {
 	if got := m.javaVersion(); got != "21" {
 		t.Errorf("after j: %q, want 21", got)
 	}
-	if out := m.View().Content; !strings.Contains(out, "> 21") {
+	if out := plain(m); !strings.Contains(out, "> 21") {
 		t.Errorf("java view should mark 21 as selected:\n%s", out)
 	}
 
 	m = keys(t, m, "enter")
-	if m.screen != screenSummary {
-		t.Fatalf("screen = %v, want summary", m.screen)
-	}
-	out := m.View().Content
-	if !strings.Contains(out, "demo") || !strings.Contains(out, "21") {
-		t.Errorf("summary should show the answers:\n%s", out)
+	if m.screen != screenDeps {
+		t.Fatalf("screen = %v, want deps", m.screen)
 	}
 }
 
@@ -331,14 +368,19 @@ func TestJavaDefaultFallsBackToFirstVersion(t *testing.T) {
 
 func TestBackNavigation(t *testing.T) {
 	m := typeText(t, loaded(t), "demo")
-	m = keys(t, m, "enter", "up", "enter")
+	m = keys(t, m, "enter", "up", "enter", "space", "enter")
 	if m.screen != screenSummary {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
 
 	m = keys(t, m, "esc")
+	if m.screen != screenDeps || !slices.Equal(m.selectedDeps(), []string{"web"}) {
+		t.Fatalf("esc on summary: screen = %v, deps = %v; want deps screen with web", m.screen, m.selectedDeps())
+	}
+
+	m = keys(t, m, "esc")
 	if m.screen != screenJava || m.javaVersion() != "21" {
-		t.Fatalf("esc on summary: screen = %v, java = %q; want java screen with 21", m.screen, m.javaVersion())
+		t.Fatalf("esc on deps: screen = %v, java = %q; want java screen with 21", m.screen, m.javaVersion())
 	}
 
 	m, cmd := step(t, m, press("esc"))
@@ -355,36 +397,240 @@ func TestBackNavigation(t *testing.T) {
 
 func TestQuitFromFormScreens(t *testing.T) {
 	m := typeText(t, loaded(t), "demo")
-	m = keys(t, m, "enter")
-	_, cmd := step(t, m, press("q"))
-	assertQuits(t, cmd)
-
-	m = keys(t, m, "enter")
-	_, cmd = step(t, m, press("q"))
-	assertQuits(t, cmd)
+	for _, screen := range []screen{screenJava, screenDeps, screenSummary} {
+		m = keys(t, m, "enter")
+		if m.screen != screen {
+			t.Fatalf("screen = %v, want %v", m.screen, screen)
+		}
+		_, cmd := step(t, m, press("q"))
+		assertQuits(t, cmd)
+	}
 }
 
-func TestViewFitsWidth(t *testing.T) {
+// onDeps returns a model on the dependency screen.
+func onDeps(t *testing.T) Model {
+	t.Helper()
+	m := typeText(t, loaded(t), "demo")
+	m = keys(t, m, "enter", "enter")
+	if m.screen != screenDeps {
+		t.Fatalf("screen = %v, want deps", m.screen)
+	}
+	return m
+}
+
+func TestDepsToggle(t *testing.T) {
+	m := onDeps(t)
+	if got := m.selectedDeps(); len(got) != 0 {
+		t.Fatalf("selectedDeps() = %v, want none", got)
+	}
+	if out := plain(m); !strings.Contains(out, "[ ] Spring Web") || !strings.Contains(out, "Selected: none") {
+		t.Errorf("deps view should list unchecked items:\n%s", out)
+	}
+
+	m = keys(t, m, "space")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"web"}) {
+		t.Errorf("after space: selectedDeps() = %v, want [web]", got)
+	}
+	if out := plain(m); !strings.Contains(out, "[x] Spring Web") || !strings.Contains(out, "Selected (1): web") {
+		t.Errorf("deps view should show web as checked:\n%s", out)
+	}
+
+	m = keys(t, m, "down", "tab")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"web", "data-jpa"}) {
+		t.Errorf("after down, tab: selectedDeps() = %v, want [web data-jpa]", got)
+	}
+
+	m = keys(t, m, "space")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"web"}) {
+		t.Errorf("after toggling data-jpa off: selectedDeps() = %v, want [web]", got)
+	}
+}
+
+func TestDepsKeepMetadataOrder(t *testing.T) {
+	m := keys(t, onDeps(t), "down", "space", "up", "space")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"web", "data-jpa"}) {
+		t.Errorf("selectedDeps() = %v, want metadata order [web data-jpa]", got)
+	}
+}
+
+func TestDepsToggleDoesNotChangeEarlierModels(t *testing.T) {
+	before := onDeps(t)
+	after := keys(t, before, "space")
+	if len(before.selectedDeps()) != 0 || len(after.selectedDeps()) != 1 {
+		t.Errorf("before = %v, after = %v; want the toggle to affect only the new model",
+			before.selectedDeps(), after.selectedDeps())
+	}
+}
+
+func TestDepsFilterTakesOverTheKeyboard(t *testing.T) {
+	m := keys(t, onDeps(t), "/")
+	if m.deps.FilterState() != list.Filtering {
+		t.Fatalf("filter state = %v, want filtering", m.deps.FilterState())
+	}
+
+	// q and space are filter text now, not shortcuts.
+	m, cmd := step(t, m, press("q"))
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("q quit the program while typing a filter")
+		}
+	}
+	m = keys(t, m, "space")
+	if m.screen != screenDeps || len(m.selectedDeps()) != 0 {
+		t.Errorf("screen = %v, deps = %v; typing a filter should not select anything", m.screen, m.selectedDeps())
+	}
+	if got := m.deps.FilterInput.Value(); got != "q " {
+		t.Errorf("filter text = %q, want %q", got, "q ")
+	}
+
+	out := plain(m)
+	if !strings.Contains(out, "apply filter") || strings.Contains(out, "q quit") {
+		t.Errorf("footer should show the filter keys only:\n%s", out)
+	}
+
+	m = keys(t, m, "esc")
+	if m.screen != screenDeps || m.deps.FilterState() != list.Unfiltered {
+		t.Errorf("esc while filtering: screen = %v, filter = %v; want deps, unfiltered", m.screen, m.deps.FilterState())
+	}
+}
+
+func TestDepsFilterByTyping(t *testing.T) {
+	m := New(fakeBackend{})
+	m.exists = func(string) bool { return false }
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter")
+	if m.deps.Paginator.TotalPages < 2 {
+		t.Fatalf("test needs several pages, got %d", m.deps.Paginator.TotalPages)
+	}
+
+	m = keys(t, m, "/")
+	for _, r := range "name 07" {
+		var cmd tea.Cmd
+		m, cmd = step(t, m, press(string(r)))
+		m = settle(t, m, cmd)
+	}
+
+	out := plain(m)
+	if !strings.Contains(out, "Display Name 07") || strings.Contains(out, "Display Name 08") {
+		t.Errorf("only dependency 07 should be listed:\n%s", out)
+	}
+	if m.deps.Paginator.TotalPages != 1 {
+		t.Errorf("TotalPages = %d after filtering down to one match, want 1", m.deps.Paginator.TotalPages)
+	}
+
+	m = keys(t, m, "enter", "space")
+	if m.deps.FilterState() != list.FilterApplied {
+		t.Fatalf("filter state = %v, want applied", m.deps.FilterState())
+	}
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"dependency-with-a-long-identifier-07"}) {
+		t.Errorf("selectedDeps() = %v, want dependency 07", got)
+	}
+}
+
+func TestDepsAppliedFilter(t *testing.T) {
+	m := onDeps(t)
+	m.deps.SetFilterText("jpa")
+	m.syncKeys()
+	if m.deps.FilterState() != list.FilterApplied {
+		t.Fatalf("filter state = %v, want applied", m.deps.FilterState())
+	}
+	out := plain(m)
+	if strings.Contains(out, "Spring Web") || !strings.Contains(out, "Spring Data JPA") {
+		t.Errorf("only the JPA dependency should be listed:\n%s", out)
+	}
+	if !strings.Contains(out, "clear filter") {
+		t.Errorf("footer should offer to clear the filter:\n%s", out)
+	}
+
+	// The cursor is on the first match, not on the first dependency.
+	m = keys(t, m, "space")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"data-jpa"}) {
+		t.Errorf("selectedDeps() = %v, want [data-jpa]", got)
+	}
+
+	// esc clears the filter first, and only then goes back.
+	m = keys(t, m, "esc")
+	if m.screen != screenDeps || m.deps.FilterState() != list.Unfiltered {
+		t.Fatalf("first esc: screen = %v, filter = %v; want deps, unfiltered", m.screen, m.deps.FilterState())
+	}
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"data-jpa"}) {
+		t.Errorf("clearing the filter changed the selection: %v", got)
+	}
+	m = keys(t, m, "esc")
+	if m.screen != screenJava {
+		t.Errorf("second esc: screen = %v, want java", m.screen)
+	}
+}
+
+func TestDepsFilterWithoutMatches(t *testing.T) {
+	m := onDeps(t)
+	m.deps.SetFilterText("no such dependency")
+	m = keys(t, m, "space")
+	if got := m.selectedDeps(); len(got) != 0 {
+		t.Errorf("selectedDeps() = %v, want none", got)
+	}
+}
+
+func TestSummaryShowsAnswers(t *testing.T) {
+	m := keys(t, onDeps(t), "enter")
+	if out := plain(m); !strings.Contains(out, "none") {
+		t.Errorf("summary without dependencies should say none:\n%s", out)
+	}
+
+	m = keys(t, onDeps(t), "space", "down", "space", "enter")
+	if m.screen != screenSummary {
+		t.Fatalf("screen = %v, want summary", m.screen)
+	}
+	out := plain(m)
+	for _, want := range []string{"demo", "17", "web, data-jpa"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary is missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// manyDeps returns metadata with enough dependencies to need several pages.
+func manyDeps() initializr.Metadata {
+	md := testMetadata
+	md.Dependencies = nil
+	for i := range 60 {
+		md.Dependencies = append(md.Dependencies, initializr.Dependency{
+			ID:   fmt.Sprintf("dependency-with-a-long-identifier-%02d", i),
+			Name: fmt.Sprintf("Dependency With A Rather Long Display Name %02d", i),
+		})
+	}
+	return md
+}
+
+func TestViewFitsWindow(t *testing.T) {
 	longErr := errors.New(strings.Repeat("something went wrong ", 10))
 	longName := strings.Repeat("a", 64)
 
-	for _, width := range []int{120, 80, 40, 24} {
+	for _, size := range [][2]int{{120, 40}, {80, 24}, {40, 16}, {24, 12}} {
+		width, height := size[0], size[1]
 		check := func(screen string, m Model) {
 			t.Helper()
-			if w := lipgloss.Width(m.View().Content); w > width {
-				t.Errorf("%s view is %d wide at width %d", screen, w, width)
+			w, h := lipgloss.Size(m.View().Content)
+			if w > width {
+				t.Errorf("%s view is %d wide in a %dx%d window", screen, w, width, height)
+			}
+			// Wrapped text may legitimately need more rows than a tiny
+			// window has. The other screens must always fit.
+			if h > height && screen != "error" && screen != "summary" {
+				t.Errorf("%s view is %d high in a %dx%d window", screen, h, width, height)
 			}
 		}
 
 		m := New(fakeBackend{})
 		m.exists = func(string) bool { return false }
-		m, _ = step(t, m, tea.WindowSizeMsg{Width: width, Height: 24})
+		m, _ = step(t, m, tea.WindowSizeMsg{Width: width, Height: height})
 		check("loading", m)
 
 		failed, _ := step(t, m, loadFailedMsg{longErr})
 		check("error", failed)
 
-		m, _ = step(t, m, metadataLoadedMsg{testMetadata})
+		m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
 		check("empty name", m)
 		check("invalid name", keys(t, typeText(t, m, "not valid!"), "enter"))
 
@@ -393,6 +639,32 @@ func TestViewFitsWidth(t *testing.T) {
 		m = keys(t, m, "enter")
 		check("java", m)
 		m = keys(t, m, "enter")
+		check("deps", m)
+		check("deps filter", keys(t, m, "/", "x"))
+
+		// Select a few pages worth of dependencies.
+		for range 3 {
+			m = keys(t, m, "space", "down", "space", "down", "space", "right")
+		}
+		check("deps with selection", m)
+		m = keys(t, m, "enter")
 		check("summary", m)
+	}
+}
+
+func TestDepsListHeightStaysTheSame(t *testing.T) {
+	m := New(fakeBackend{})
+	m.exists = func(string) bool { return false }
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter")
+
+	want := lipgloss.Height(m.View().Content)
+	last := keys(t, m, "G")
+	m.deps.SetFilterText("05")
+	for name, variant := range map[string]Model{"last page": last, "one match": m, "typing filter": keys(t, m, "/")} {
+		if got := lipgloss.Height(variant.View().Content); got != want {
+			t.Errorf("%s: frame is %d lines, want %d", name, got, want)
+		}
 	}
 }
