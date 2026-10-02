@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -20,10 +21,20 @@ import (
 type fakeBackend struct {
 	metadata initializr.Metadata
 	err      error
+
+	generateErr error
+	requests    []initializr.Request // what Generate was asked for
+	dests       []string
 }
 
-func (f fakeBackend) Metadata(context.Context) (initializr.Metadata, error) {
+func (f *fakeBackend) Metadata(context.Context) (initializr.Metadata, error) {
 	return f.metadata, f.err
+}
+
+func (f *fakeBackend) Generate(_ context.Context, req initializr.Request, dest string) error {
+	f.requests = append(f.requests, req)
+	f.dests = append(f.dests, dest)
+	return f.generateErr
 }
 
 var testMetadata = initializr.Metadata{
@@ -47,6 +58,10 @@ func press(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyUp}
 	case "down":
 		return tea.KeyPressMsg{Code: tea.KeyDown}
+	case "left":
+		return tea.KeyPressMsg{Code: tea.KeyLeft}
+	case "right":
+		return tea.KeyPressMsg{Code: tea.KeyRight}
 	case "tab":
 		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "space":
@@ -119,7 +134,7 @@ func typeText(t *testing.T, m Model, text string) Model {
 // a directory where no project exists yet.
 func loaded(t *testing.T) Model {
 	t.Helper()
-	m := New(fakeBackend{metadata: testMetadata})
+	m := New(&fakeBackend{metadata: testMetadata})
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
@@ -137,20 +152,20 @@ func assertQuits(t *testing.T, cmd tea.Cmd) {
 }
 
 func TestLoadCmd(t *testing.T) {
-	msg := New(fakeBackend{metadata: testMetadata}).loadCmd()()
+	msg := New(&fakeBackend{metadata: testMetadata}).loadCmd()()
 	got, ok := msg.(metadataLoadedMsg)
 	if !ok || len(got.metadata.Dependencies) != 2 {
 		t.Errorf("loadCmd() = %#v, want metadataLoadedMsg with 2 dependencies", msg)
 	}
 
-	msg = New(fakeBackend{err: errors.New("boom")}).loadCmd()()
+	msg = New(&fakeBackend{err: errors.New("boom")}).loadCmd()()
 	if failed, ok := msg.(loadFailedMsg); !ok || failed.err.Error() != "boom" {
 		t.Errorf("loadCmd() = %#v, want loadFailedMsg{boom}", msg)
 	}
 }
 
 func TestLoadingShowsSpinnerText(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	if m.screen != screenLoading {
 		t.Fatalf("screen = %v, want loading", m.screen)
 	}
@@ -163,7 +178,7 @@ func TestLoadingShowsSpinnerText(t *testing.T) {
 }
 
 func TestMetadataLoadedShowsNameScreen(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	m, cmd := step(t, m, metadataLoadedMsg{testMetadata})
 	if m.screen != screenName {
 		t.Fatalf("screen = %v, want name", m.screen)
@@ -177,7 +192,7 @@ func TestMetadataLoadedShowsNameScreen(t *testing.T) {
 }
 
 func TestLoadFailureCanBeRetried(t *testing.T) {
-	m := New(fakeBackend{metadata: testMetadata})
+	m := New(&fakeBackend{metadata: testMetadata})
 	m, _ = step(t, m, loadFailedMsg{errors.New("boom")})
 	if m.screen != screenError {
 		t.Fatalf("screen = %v, want error", m.screen)
@@ -200,7 +215,7 @@ func TestLoadFailureCanBeRetried(t *testing.T) {
 }
 
 func TestRetryIsIgnoredWhileLoading(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	m, _ = step(t, m, press("r"))
 	if m.screen != screenLoading {
 		t.Errorf("screen = %v, want loading", m.screen)
@@ -208,7 +223,7 @@ func TestRetryIsIgnoredWhileLoading(t *testing.T) {
 }
 
 func TestQuit(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	m, cmd := step(t, m, press("q"))
 	assertQuits(t, cmd)
 	if m.ctx.Err() == nil {
@@ -226,7 +241,7 @@ func TestQuit(t *testing.T) {
 }
 
 func TestQuitFromErrorKeepsTheError(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	m, _ = step(t, m, loadFailedMsg{errors.New("boom")})
 	m, _ = step(t, m, press("q"))
 
@@ -243,7 +258,7 @@ func TestQuitFromErrorKeepsTheError(t *testing.T) {
 }
 
 func TestCtrlCInterrupts(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	m, _ = step(t, m, loadFailedMsg{errors.New("boom")})
 	m, cmd := step(t, m, press("ctrl+c"))
 	assertQuits(t, cmd)
@@ -356,7 +371,7 @@ func TestJavaVersionSelection(t *testing.T) {
 }
 
 func TestJavaDefaultFallsBackToFirstVersion(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	m, _ = step(t, m, metadataLoadedMsg{initializr.Metadata{
 		JavaVersions:       []string{"25", "21"},
 		DefaultJavaVersion: "8",
@@ -369,7 +384,7 @@ func TestJavaDefaultFallsBackToFirstVersion(t *testing.T) {
 func TestBackNavigation(t *testing.T) {
 	m := typeText(t, loaded(t), "demo")
 	m = keys(t, m, "enter", "up", "enter", "space", "enter")
-	if m.screen != screenSummary {
+	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
 
@@ -397,7 +412,7 @@ func TestBackNavigation(t *testing.T) {
 
 func TestQuitFromFormScreens(t *testing.T) {
 	m := typeText(t, loaded(t), "demo")
-	for _, screen := range []screen{screenJava, screenDeps, screenSummary} {
+	for _, screen := range []screen{screenJava, screenDeps, screenConfirm} {
 		m = keys(t, m, "enter")
 		if m.screen != screen {
 			t.Fatalf("screen = %v, want %v", m.screen, screen)
@@ -495,7 +510,7 @@ func TestDepsFilterTakesOverTheKeyboard(t *testing.T) {
 }
 
 func TestDepsFilterByTyping(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
@@ -579,7 +594,7 @@ func TestSummaryShowsAnswers(t *testing.T) {
 	}
 
 	m = keys(t, onDeps(t), "space", "down", "space", "enter")
-	if m.screen != screenSummary {
+	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
 	out := plain(m)
@@ -587,6 +602,189 @@ func TestSummaryShowsAnswers(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary is missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// onConfirm returns a model on the confirm prompt for project "demo", Java
+// 17 and the web dependency, together with the backend it talks to.
+func onConfirm(t *testing.T) (Model, *fakeBackend) {
+	t.Helper()
+	backend := &fakeBackend{metadata: testMetadata}
+	m := New(backend)
+	m.exists = func(string) bool { return false }
+	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "space", "enter")
+	if m.screen != screenConfirm {
+		t.Fatalf("screen = %v, want confirm", m.screen)
+	}
+	return m, backend
+}
+
+func TestConfirmYesGeneratesTheProject(t *testing.T) {
+	m, backend := onConfirm(t)
+	if out := plain(m); !strings.Contains(out, "Generate demo?") {
+		t.Errorf("confirm view should ask the question:\n%s", out)
+	}
+
+	m, cmd := step(t, m, press("enter")) // Yes is preselected
+	if m.screen != screenGenerating || cmd == nil {
+		t.Fatalf("screen = %v, cmd = %v; want generating with a command", m.screen, cmd)
+	}
+	if out := plain(m); !strings.Contains(out, "Generating demo") {
+		t.Errorf("generating view should name the project:\n%s", out)
+	}
+
+	msg := m.generateCmd()()
+	if _, ok := msg.(generatedMsg); !ok {
+		t.Fatalf("generateCmd() = %#v, want generatedMsg", msg)
+	}
+	want := initializr.Request{Name: "demo", JavaVersion: "17", Dependencies: []string{"web"}}
+	if len(backend.requests) != 1 || !reflect.DeepEqual(backend.requests[0], want) {
+		t.Errorf("Generate requests = %+v, want [%+v]", backend.requests, want)
+	}
+	if !slices.Equal(backend.dests, []string{"demo"}) {
+		t.Errorf("Generate dests = %v, want [demo]", backend.dests)
+	}
+
+	m, cmd = step(t, m, msg)
+	assertQuits(t, cmd)
+	if m.Err() != nil || m.Interrupted() {
+		t.Errorf("Err() = %v, Interrupted() = %v; want a clean exit", m.Err(), m.Interrupted())
+	}
+	out := plain(m)
+	for _, want := range []string{"Project generated successfully.", "cd demo", "./mvnw spring-boot:run"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("result is missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "quit") {
+		t.Errorf("result should not show the help footer:\n%s", out)
+	}
+}
+
+func TestConfirmAnswers(t *testing.T) {
+	tests := []struct {
+		name     string
+		keys     []string
+		generate bool
+	}{
+		{name: "enter on the default", keys: []string{"enter"}, generate: true},
+		{name: "y", keys: []string{"y"}, generate: true},
+		{name: "y while No is highlighted", keys: []string{"right", "y"}, generate: true},
+		{name: "switch twice, enter", keys: []string{"right", "left", "enter"}, generate: true},
+		{name: "switch to No, enter", keys: []string{"right", "enter"}},
+		{name: "tab to No, enter", keys: []string{"tab", "enter"}},
+		{name: "n", keys: []string{"n"}},
+		{name: "q", keys: []string{"q"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m, _ := onConfirm(t)
+			var cmd tea.Cmd
+			for _, k := range tt.keys {
+				m, cmd = step(t, m, press(k))
+			}
+
+			if tt.generate {
+				if m.screen != screenGenerating || cmd == nil {
+					t.Errorf("screen = %v, cmd = %v; want generating with a command", m.screen, cmd)
+				}
+				return
+			}
+			assertQuits(t, cmd)
+			if m.Err() != nil || m.Interrupted() {
+				t.Errorf("Err() = %v, Interrupted() = %v; declining should exit cleanly", m.Err(), m.Interrupted())
+			}
+			if out := m.View().Content; out != m.bannerView()+"\n" {
+				t.Errorf("view after declining should be the banner only, got:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestConfirmBackKeepsAnswers(t *testing.T) {
+	m, _ := onConfirm(t)
+	m = keys(t, m, "esc")
+	if m.screen != screenDeps || !slices.Equal(m.selectedDeps(), []string{"web"}) {
+		t.Errorf("screen = %v, deps = %v; want deps screen with web", m.screen, m.selectedDeps())
+	}
+}
+
+func TestGenerateFailure(t *testing.T) {
+	backend := &fakeBackend{metadata: testMetadata, generateErr: errors.New("demo already exists")}
+	m, _ := onConfirm(t)
+	m.backend = backend
+	m = keys(t, m, "enter")
+
+	msg := m.generateCmd()()
+	if failed, ok := msg.(generateFailedMsg); !ok || failed.err.Error() != "demo already exists" {
+		t.Fatalf("generateCmd() = %#v, want generateFailedMsg", msg)
+	}
+
+	m, _ = step(t, m, msg)
+	if m.screen != screenError {
+		t.Fatalf("screen = %v, want error", m.screen)
+	}
+	out := plain(m)
+	for _, want := range []string{"demo already exists", "retry", "back"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("error view is missing %q:\n%s", want, out)
+		}
+	}
+
+	// r tries the generation again, not the metadata download.
+	retried, cmd := step(t, m, press("r"))
+	if retried.screen != screenGenerating || retried.err != nil || cmd == nil {
+		t.Errorf("after r: screen = %v, err = %v, cmd = %v; want generating", retried.screen, retried.err, cmd)
+	}
+
+	back := keys(t, m, "esc")
+	if back.screen != screenConfirm || back.err != nil || back.name != "demo" {
+		t.Errorf("after esc: screen = %v, err = %v, name = %q; want confirm with answers", back.screen, back.err, back.name)
+	}
+
+	quit, cmd := step(t, m, press("q"))
+	assertQuits(t, cmd)
+	if quit.Err() == nil || !strings.Contains(plain(quit), "demo already exists") {
+		t.Errorf("quitting from the error should keep it: Err() = %v", quit.Err())
+	}
+}
+
+func TestLoadFailureOffersNoWayBack(t *testing.T) {
+	m := New(&fakeBackend{})
+	m, _ = step(t, m, loadFailedMsg{errors.New("boom")})
+	if out := plain(m); strings.Contains(out, "back") {
+		t.Errorf("there is nothing to go back to after a load failure:\n%s", out)
+	}
+	if m = keys(t, m, "esc"); m.screen != screenError {
+		t.Errorf("esc on a load failure: screen = %v, want error", m.screen)
+	}
+}
+
+func TestQuitWhileGeneratingIgnoresLateResults(t *testing.T) {
+	for name, late := range map[string]tea.Msg{
+		"cancelled request": generateFailedMsg{context.Canceled},
+		"finished anyway":   generatedMsg{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m, _ := onConfirm(t)
+			m = keys(t, m, "enter")
+			m, cmd := step(t, m, press("q"))
+			assertQuits(t, cmd)
+			if m.ctx.Err() == nil {
+				t.Error("quitting should cancel the request")
+			}
+
+			m, _ = step(t, m, late)
+			if m.Err() != nil {
+				t.Errorf("Err() = %v, want nil", m.Err())
+			}
+			if out := m.View().Content; out != m.bannerView()+"\n" {
+				t.Errorf("view should stay the banner only, got:\n%s", out)
+			}
+		})
 	}
 }
 
@@ -617,12 +815,12 @@ func TestViewFitsWindow(t *testing.T) {
 			}
 			// Wrapped text may legitimately need more rows than a tiny
 			// window has. The other screens must always fit.
-			if h > height && screen != "error" && screen != "summary" {
+			if h > height && !strings.Contains(screen, "error") && !strings.Contains(screen, "summary") && screen != "done" {
 				t.Errorf("%s view is %d high in a %dx%d window", screen, h, width, height)
 			}
 		}
 
-		m := New(fakeBackend{})
+		m := New(&fakeBackend{})
 		m.exists = func(string) bool { return false }
 		m, _ = step(t, m, tea.WindowSizeMsg{Width: width, Height: height})
 		check("loading", m)
@@ -649,11 +847,18 @@ func TestViewFitsWindow(t *testing.T) {
 		check("deps with selection", m)
 		m = keys(t, m, "enter")
 		check("summary", m)
+		check("summary, No highlighted", keys(t, m, "right"))
+		m = keys(t, m, "enter")
+		check("generating", m)
+		done, _ := step(t, m, generatedMsg{})
+		check("done", done)
+		failed, _ = step(t, m, generateFailedMsg{longErr})
+		check("generate error", failed)
 	}
 }
 
 func TestDepsListHeightStaysTheSame(t *testing.T) {
-	m := New(fakeBackend{})
+	m := New(&fakeBackend{})
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})

@@ -7,6 +7,9 @@ import "charm.land/bubbles/v2/key"
 type keyMap struct {
 	Up, Down, Toggle, Next, Back, Retry, Cancel, Quit key.Binding
 
+	// The confirm prompt.
+	Switch, Confirm, Yes, No key.Binding
+
 	// Move stands in for Up and Down in the footer, to keep it short.
 	Move key.Binding
 
@@ -27,6 +30,11 @@ func defaultKeyMap() keyMap {
 		Cancel: key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "quit")),
 		Quit:   key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 
+		Switch:  key.NewBinding(key.WithKeys("left", "right", "h", "l", "tab"), key.WithHelp("←/→", "switch")),
+		Confirm: key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+		Yes:     key.NewBinding(key.WithKeys("y"), key.WithHelp("y", "yes")),
+		No:      key.NewBinding(key.WithKeys("n"), key.WithHelp("n", "no")),
+
 		Move: key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("↑/↓", "move")),
 
 		Filter:       key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
@@ -40,7 +48,8 @@ func defaultKeyMap() keyMap {
 func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{
 		k.Move, k.Toggle, k.Filter, k.ApplyFilter, k.CancelFilter,
-		k.Next, k.ClearFilter, k.Back, k.Retry, k.Cancel, k.Quit,
+		k.Switch, k.Next, k.Confirm, k.Yes, k.No,
+		k.ClearFilter, k.Retry, k.Back, k.Cancel, k.Quit,
 	}
 }
 

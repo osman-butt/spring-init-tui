@@ -137,7 +137,7 @@ func (m Model) updateDeps(msg tea.Msg) (Model, tea.Cmd) {
 			m.toggleDep()
 			return m, nil
 		case key.Matches(k, m.keys.Next):
-			m.setScreen(screenSummary)
+			m.setScreen(screenConfirm)
 			return m, nil
 		case key.Matches(k, m.keys.Back):
 			// With a filter applied, esc clears it (handled by the list).

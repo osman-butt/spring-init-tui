@@ -18,6 +18,7 @@ import (
 // Backend is the part of the Spring Initializr client the UI needs.
 type Backend interface {
 	Metadata(ctx context.Context) (initializr.Metadata, error)
+	Generate(ctx context.Context, req initializr.Request, dest string) error
 }
 
 type screen int
@@ -27,7 +28,9 @@ const (
 	screenName
 	screenJava
 	screenDeps
-	screenSummary
+	screenConfirm
+	screenGenerating
+	screenDone
 	screenError
 )
 
@@ -35,6 +38,8 @@ const (
 type (
 	metadataLoadedMsg struct{ metadata initializr.Metadata }
 	loadFailedMsg     struct{ err error }
+	generatedMsg      struct{}
+	generateFailedMsg struct{ err error }
 )
 
 // Model is the root Bubble Tea model.
@@ -45,6 +50,7 @@ type Model struct {
 	cancel        context.CancelFunc
 	metadata      initializr.Metadata
 	err           error
+	failed        screen // the step that produced err: loading or generating
 	quitting      bool
 	interrupted   bool
 	width, height int
@@ -54,6 +60,7 @@ type Model struct {
 	nameErr    error
 	javaCursor int
 	selected   map[string]bool // dependency IDs
+	confirmYes bool
 
 	// exists reports whether a path is already taken. Tests replace it.
 	exists func(path string) bool
@@ -74,6 +81,9 @@ func New(backend Backend) Model {
 		ctx:     ctx,
 		cancel:  cancel,
 		exists:  pathExists,
+
+		confirmYes: true,
+
 		keys:    defaultKeyMap(),
 		help:    help.New(),
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
@@ -119,6 +129,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
+	if m.quitting {
+		// Anything that arrives after the user quit, such as the cancelled
+		// request failing, must not change the last frame or the exit code.
+		return m, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -146,9 +162,14 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, tea.Batch(m.input.Focus(), m.deps.SetItems(depItems(msg.metadata.Dependencies)))
 
 	case loadFailedMsg:
-		m.err = msg.err
-		m.setScreen(screenError)
-		return m, nil
+		return m.fail(screenLoading, msg.err), nil
+
+	case generatedMsg:
+		m.setScreen(screenDone)
+		return m.quit()
+
+	case generateFailedMsg:
+		return m.fail(screenGenerating, msg.err), nil
 	}
 
 	switch m.screen {
@@ -160,8 +181,10 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.updateJava(msg)
 	case screenDeps:
 		return m.updateDeps(msg)
-	case screenSummary:
-		return m.updateSummary(msg)
+	case screenConfirm:
+		return m.updateConfirm(msg)
+	case screenGenerating:
+		return m.updateGenerating(msg)
 	case screenError:
 		return m.updateError(msg)
 	}
@@ -177,13 +200,26 @@ func (m Model) updateLoading(msg tea.Msg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
+// fail shows err on the error screen and remembers which step to retry.
+func (m Model) fail(step screen, err error) Model {
+	m.err, m.failed = err, step
+	m.setScreen(screenError)
+	return m
+}
+
 func (m Model) updateError(msg tea.Msg) (Model, tea.Cmd) {
 	if k, ok := msg.(tea.KeyPressMsg); ok {
 		switch {
 		case key.Matches(k, m.keys.Retry):
 			m.err = nil
+			if m.failed == screenGenerating {
+				return m.startGenerating()
+			}
 			m.setScreen(screenLoading)
 			return m, tea.Batch(m.spinner.Tick, m.loadCmd())
+		case key.Matches(k, m.keys.Back):
+			m.err = nil
+			m.setScreen(screenConfirm)
 		case key.Matches(k, m.keys.Quit):
 			return m.quit()
 		}
@@ -215,7 +251,14 @@ func (m *Model) syncKeys() {
 	k.CancelFilter.SetEnabled(typingFilter)
 	k.ClearFilter.SetEnabled(filterApplied)
 	k.Next.SetEnabled(s == screenName || s == screenJava || browsingDeps)
-	k.Back.SetEnabled(s == screenJava || s == screenSummary || (browsingDeps && !filterApplied))
+	k.Switch.SetEnabled(s == screenConfirm)
+	k.Confirm.SetEnabled(s == screenConfirm)
+	k.Yes.SetEnabled(s == screenConfirm)
+	k.No.SetEnabled(s == screenConfirm)
+	// From the error screen there is only a way back when the answers
+	// exist, i.e. when generating failed rather than loading.
+	generateFailed := s == screenError && m.failed == screenGenerating
+	k.Back.SetEnabled(s == screenJava || s == screenConfirm || (browsingDeps && !filterApplied) || generateFailed)
 	k.Retry.SetEnabled(s == screenError)
 	k.Cancel.SetEnabled(s == screenName)
 	k.Quit.SetEnabled(s != screenName && !typingFilter)
@@ -269,8 +312,9 @@ func (m Model) View() tea.View {
 
 func (m Model) content() string {
 	// The last frame stays in the scrollback. When the user quits, keep only
-	// the banner, unless there is an error worth leaving on screen.
-	if m.quitting && m.err == nil {
+	// the banner, unless there is a result or an error worth leaving on
+	// screen.
+	if m.quitting && m.err == nil && m.screen != screenDone {
 		return m.bannerView()
 	}
 
@@ -284,8 +328,12 @@ func (m Model) content() string {
 		body = m.javaView()
 	case screenDeps:
 		body = m.depsView()
-	case screenSummary:
-		body = m.summaryView()
+	case screenConfirm:
+		body = m.confirmView()
+	case screenGenerating:
+		body = m.spinner.View() + "Generating " + m.name + "…"
+	case screenDone:
+		body = m.doneView()
 	case screenError:
 		body = m.styles.err.Width(m.width).Render("Error: " + m.err.Error())
 	}

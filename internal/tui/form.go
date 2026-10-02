@@ -119,18 +119,40 @@ func (m Model) javaView() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m Model) updateSummary(msg tea.Msg) (Model, tea.Cmd) {
+func (m Model) updateConfirm(msg tea.Msg) (Model, tea.Cmd) {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
 	switch {
+	case key.Matches(k, m.keys.Switch):
+		m.confirmYes = !m.confirmYes
+	case key.Matches(k, m.keys.Yes):
+		return m.startGenerating()
+	case key.Matches(k, m.keys.Confirm):
+		if m.confirmYes {
+			return m.startGenerating()
+		}
+		return m.quit()
+	case key.Matches(k, m.keys.No), key.Matches(k, m.keys.Quit):
+		return m.quit()
 	case key.Matches(k, m.keys.Back):
 		m.setScreen(screenDeps)
-	case key.Matches(k, m.keys.Quit):
-		return m.quit()
 	}
 	return m, nil
+}
+
+func (m Model) confirmView() string {
+	yes, no := m.styles.button, m.styles.activeButton
+	if m.confirmYes {
+		yes, no = no, yes
+	}
+	return strings.Join([]string{
+		m.summaryView(),
+		"",
+		m.styles.header.Render("Generate " + m.name + "?"),
+		yes.Render("Yes") + " " + no.Render("No"),
+	}, "\n")
 }
 
 func (m Model) summaryView() string {

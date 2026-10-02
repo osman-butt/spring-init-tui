@@ -6,6 +6,7 @@ import "charm.land/lipgloss/v2"
 // UI stays readable on light and dark themes.
 type styles struct {
 	banner, title, tagline, header, selected, subtle, err, spinner lipgloss.Style
+	button, activeButton, result, success                          lipgloss.Style
 }
 
 func newStyles(isDark bool) styles {
@@ -22,5 +23,10 @@ func newStyles(isDark bool) styles {
 		subtle:   lipgloss.NewStyle().Foreground(muted),
 		err:      lipgloss.NewStyle().Bold(true).Foreground(ld(lipgloss.Color("#D7263D"), lipgloss.Color("#FF5F87"))),
 		spinner:  lipgloss.NewStyle().Foreground(green),
+
+		button:       lipgloss.NewStyle().Padding(0, 2).Foreground(muted),
+		activeButton: lipgloss.NewStyle().Padding(0, 2).Bold(true).Foreground(lipgloss.Color("#FFFFFF")).Background(lipgloss.Color("#4C8B2B")),
+		result:       lipgloss.NewStyle().Border(lipgloss.NormalBorder()).Padding(1, 2),
+		success:      lipgloss.NewStyle().Bold(true).Foreground(green),
 	}
 }
