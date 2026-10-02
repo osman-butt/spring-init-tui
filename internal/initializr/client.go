@@ -58,7 +58,8 @@ func statusError(resp *http.Response) error {
 	var body struct {
 		Message string `json:"message"`
 	}
-	json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
+	// A body that is not JSON leaves the message empty, which is fine.
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
 	if body.Message != "" {
 		return fmt.Errorf("unexpected status %s: %s", resp.Status, body.Message)
 	}
