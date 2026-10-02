@@ -630,6 +630,53 @@ func TestNoBootVersionsOffered(t *testing.T) {
 	}
 }
 
+func TestDepsFollowTheBootVersion(t *testing.T) {
+	md := testMetadata
+	md.Dependencies = append(slices.Clone(md.Dependencies),
+		initializr.Dependency{ID: "spring-shell", Name: "Spring Shell", Group: "I/O", VersionRange: "[4.0.0,4.2.0-M1)"})
+	m := keys(t, typeText(t, loadedWith(t, md), "demo"), "enter", "enter", "enter", "enter", "enter")
+	if m.screen != screenDeps {
+		t.Fatalf("screen = %v, want deps", m.screen)
+	}
+	if out := plain(m); !strings.Contains(out, "Spring Shell") || !strings.Contains(out, "3 dependencies") || strings.Contains(out, "not available") {
+		t.Errorf("Spring Boot 4.1.1 should offer all three dependencies:\n%s", out)
+	}
+
+	// Select web and Spring Shell, then move to a version without the latter.
+	m = keys(t, m, "tab", "down", "down", "tab")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"web", "spring-shell"}) {
+		t.Fatalf("selectedDeps() = %v, want [web spring-shell]", got)
+	}
+	m = keys(t, m, "esc", "esc", "up", "enter", "enter")
+	if m.screen != screenDeps || m.boot().ID != "4.2.0-M2" {
+		t.Fatalf("screen = %v, boot = %q; want deps with 4.2.0-M2", m.screen, m.boot().ID)
+	}
+	out := plain(m)
+	if strings.Contains(out, "Spring Shell") || !strings.Contains(out, "2 dependencies (1 not available for Spring Boot 4.2.0 (M2))") {
+		t.Errorf("Spring Shell should be left out and counted:\n%s", out)
+	}
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"web"}) {
+		t.Errorf("selectedDeps() = %v, want [web]", got)
+	}
+	if got := m.request().Dependencies; !slices.Equal(got, []string{"web"}) {
+		t.Errorf("request Dependencies = %v, want [web]", got)
+	}
+
+	// The search counts only what is on offer.
+	if out := plain(typeText(t, m, "s")); !strings.Contains(out, "2 of 2 (1 not available") {
+		t.Errorf("the search should count the offered dependencies:\n%s", out)
+	}
+
+	// Back on a version that has it, the earlier pick returns.
+	m = keys(t, m, "esc", "esc", "down", "enter", "enter")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"web", "spring-shell"}) {
+		t.Errorf("selectedDeps() = %v, want [web spring-shell] again", got)
+	}
+	if out := plain(m); !strings.Contains(out, "[x] Spring Shell") {
+		t.Errorf("Spring Shell should be listed and checked again:\n%s", out)
+	}
+}
+
 func TestJavaVersionSelection(t *testing.T) {
 	m := keys(t, onBoot(t), "enter")
 	if m.screen != screenJava {

@@ -69,8 +69,11 @@ func TestMetadata(t *testing.T) {
 		t.Fatalf("len(Dependencies) = %d, want 4", len(md.Dependencies))
 	}
 	web := md.Dependencies[2]
-	if web.ID != "web" || web.Name != "Spring Web" || web.Group != "Web" {
-		t.Errorf("Dependencies[2] = %+v, want web / Spring Web / Web", web)
+	if web.ID != "web" || web.Name != "Spring Web" || web.Group != "Web" || web.VersionRange != "" {
+		t.Errorf("Dependencies[2] = %+v, want web / Spring Web / Web without a version range", web)
+	}
+	if got := md.Dependencies[1].VersionRange; got != "[4.0.0,4.2.0-M1)" {
+		t.Errorf("Dependencies[1].VersionRange = %q, want %q", got, "[4.0.0,4.2.0-M1)")
 	}
 	if !strings.HasPrefix(web.Description, "Build web") {
 		t.Errorf("Dependencies[2].Description = %q", web.Description)

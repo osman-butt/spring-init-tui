@@ -245,7 +245,10 @@ func (m Model) updateBoot(msg tea.Msg) (Model, tea.Cmd) {
 	case key.Matches(k, m.keys.Down):
 		m.bootCursor = min(m.bootCursor+1, len(m.metadata.BootVersions)-1)
 	case key.Matches(k, m.keys.Next):
+		// The version decides which dependencies can be offered.
+		cmd := m.showAvailableDeps()
 		m.setScreen(screenJava)
+		return m, cmd
 	case key.Matches(k, m.keys.Back):
 		m.setScreen(screenPackage)
 		return m, m.pkg.Focus()

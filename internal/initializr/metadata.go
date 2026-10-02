@@ -26,12 +26,14 @@ type BootVersion struct {
 }
 
 // Dependency is a single selectable dependency. Group is the category it is
-// listed under, e.g. "Web".
+// listed under, e.g. "Web". VersionRange names the Spring Boot versions it
+// works with and is empty when it works with all of them.
 type Dependency struct {
-	ID          string
-	Name        string
-	Group       string
-	Description string
+	ID           string
+	Name         string
+	Group        string
+	Description  string
+	VersionRange string
 }
 
 type metadataResponse struct {
@@ -55,9 +57,10 @@ type metadataResponse struct {
 		Values []struct {
 			Name   string `json:"name"`
 			Values []struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				Description string `json:"description"`
+				ID           string `json:"id"`
+				Name         string `json:"name"`
+				Description  string `json:"description"`
+				VersionRange string `json:"versionRange"`
 			} `json:"values"`
 		} `json:"values"`
 	} `json:"dependencies"`
@@ -91,10 +94,11 @@ func (c *Client) Metadata(ctx context.Context) (Metadata, error) {
 	for _, group := range raw.Dependencies.Values {
 		for _, d := range group.Values {
 			md.Dependencies = append(md.Dependencies, Dependency{
-				ID:          d.ID,
-				Name:        d.Name,
-				Group:       group.Name,
-				Description: d.Description,
+				ID:           d.ID,
+				Name:         d.Name,
+				Group:        group.Name,
+				Description:  d.Description,
+				VersionRange: d.VersionRange,
 			})
 		}
 	}

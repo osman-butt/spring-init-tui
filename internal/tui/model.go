@@ -184,7 +184,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		m.bootCursor = m.defaultBootIndex()
 		m.javaCursor = m.defaultJavaIndex()
 		m.setScreen(screenName)
-		return m, tea.Batch(m.input.Focus(), m.deps.SetItems(depItems(msg.metadata.Dependencies)))
+		return m, tea.Batch(m.input.Focus(), m.showAvailableDeps())
 
 	case loadFailedMsg:
 		return m.fail(screenLoading, msg.err), nil

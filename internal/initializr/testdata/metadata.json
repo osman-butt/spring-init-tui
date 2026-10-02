@@ -61,7 +61,8 @@
           {
             "id": "dgs-codegen",
             "name": "GraphQL DGS Code Generation",
-            "description": "Generate data types and type-safe APIs for querying GraphQL APIs by parsing schema files."
+            "description": "Generate data types and type-safe APIs for querying GraphQL APIs by parsing schema files.",
+            "versionRange": "[4.0.0,4.2.0-M1)"
           }
         ]
       },
