@@ -14,7 +14,7 @@ import (
 
 func main() {
 	if !term.IsTerminal(os.Stdin.Fd()) || !term.IsTerminal(os.Stdout.Fd()) {
-		fmt.Fprintln(os.Stderr, "spring-init-tui needs an interactive terminal")
+		fmt.Fprintln(os.Stderr, "si needs an interactive terminal")
 		os.Exit(2)
 	}
 

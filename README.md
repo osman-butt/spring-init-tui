@@ -11,15 +11,17 @@ The project name is also the Maven artifact. The Java package is the group plus 
 Requires Go 1.26 or newer.
 
 ```sh
-go install github.com/osman-butt/spring-init-tui@latest
+go install github.com/osman-butt/spring-init-tui/cmd/si@latest
 ```
+
+The command is called `si`.
 
 ## Usage
 
 Run it in the directory where the project should be created:
 
 ```sh
-spring-init-tui
+si
 ```
 
 Then start the generated project:
@@ -50,6 +52,6 @@ On the dependency screen, just type to search:
 ## Development
 
 ```sh
-go run .
+go run ./cmd/si
 go test ./...
 ```
