@@ -10,6 +10,7 @@ require (
 )
 
 require (
+	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
 	// Newer than bubbletea v2.0.10 asks for: fixes stale lines being left on
 	// screen when an inline frame gets shorter.

@@ -3,11 +3,11 @@ package tui
 
 import (
 	"context"
-	"fmt"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -23,7 +23,9 @@ type screen int
 
 const (
 	screenLoading screen = iota
-	screenReady
+	screenName
+	screenJava
+	screenSummary
 	screenError
 )
 
@@ -45,9 +47,18 @@ type Model struct {
 	interrupted bool
 	width       int
 
+	// Answers collected so far.
+	name       string
+	nameErr    error
+	javaCursor int
+
+	// exists reports whether a path is already taken. Tests replace it.
+	exists func(path string) bool
+
 	keys    keyMap
 	help    help.Model
 	spinner spinner.Model
+	input   textinput.Model
 	styles  styles
 }
 
@@ -58,9 +69,11 @@ func New(backend Backend) Model {
 		backend: backend,
 		ctx:     ctx,
 		cancel:  cancel,
+		exists:  pathExists,
 		keys:    defaultKeyMap(),
 		help:    help.New(),
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
+		input:   newNameInput(),
 	}
 	m.setStyles(true) // replaced once tea.BackgroundColorMsg arrives
 	m.setScreen(screenLoading)
@@ -97,6 +110,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.help.SetWidth(msg.Width)
+		// Leave room for the prompt and the cursor.
+		m.input.SetWidth(max(msg.Width-len(m.input.Prompt)-1, 1))
 		return m, nil
 
 	case tea.BackgroundColorMsg:
@@ -115,8 +130,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case metadataLoadedMsg:
 		m.metadata = msg.metadata
-		m.setScreen(screenReady)
-		return m, nil
+		m.javaCursor = m.defaultJavaIndex()
+		m.setScreen(screenName)
+		return m, m.input.Focus()
 
 	case loadFailedMsg:
 		m.err = msg.err
@@ -127,8 +143,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case screenLoading:
 		return m.updateLoading(msg)
-	case screenReady:
-		return m.updateReady(msg)
+	case screenName:
+		return m.updateName(msg)
+	case screenJava:
+		return m.updateJava(msg)
+	case screenSummary:
+		return m.updateSummary(msg)
 	case screenError:
 		return m.updateError(msg)
 	}
@@ -142,13 +162,6 @@ func (m Model) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.spinner, cmd = m.spinner.Update(msg)
 	return m, cmd
-}
-
-func (m Model) updateReady(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if k, ok := msg.(tea.KeyPressMsg); ok && key.Matches(k, m.keys.Quit) {
-		return m.quit()
-	}
-	return m, nil
 }
 
 func (m Model) updateError(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -169,13 +182,24 @@ func (m Model) updateError(msg tea.Msg) (tea.Model, tea.Cmd) {
 // which keeps the help footer accurate.
 func (m *Model) setScreen(s screen) {
 	m.screen = s
-	m.keys.Retry.SetEnabled(s == screenError)
+	k := &m.keys
+	k.Up.SetEnabled(s == screenJava)
+	k.Down.SetEnabled(s == screenJava)
+	k.Next.SetEnabled(s == screenName || s == screenJava)
+	k.Back.SetEnabled(s == screenJava || s == screenSummary)
+	k.Retry.SetEnabled(s == screenError)
+	k.Cancel.SetEnabled(s == screenName)
+	k.Quit.SetEnabled(s != screenName)
 }
 
 func (m *Model) setStyles(isDark bool) {
 	m.styles = newStyles(isDark)
 	m.help.Styles = help.DefaultStyles(isDark)
 	m.spinner.Style = m.styles.spinner
+
+	inputStyles := textinput.DefaultStyles(isDark)
+	inputStyles.Focused.Prompt = m.styles.selected
+	m.input.SetStyles(inputStyles)
 }
 
 func (m Model) quit() (tea.Model, tea.Cmd) {
@@ -201,9 +225,12 @@ func (m Model) content() string {
 	switch m.screen {
 	case screenLoading:
 		body = m.spinner.View() + "Fetching metadata…" // Dot frames end with a space
-	case screenReady:
-		body = fmt.Sprintf("Loaded %d Java versions and %d dependencies.",
-			len(m.metadata.JavaVersions), len(m.metadata.Dependencies))
+	case screenName:
+		body = m.nameView()
+	case screenJava:
+		body = m.javaView()
+	case screenSummary:
+		body = m.summaryView()
 	case screenError:
 		body = m.styles.err.Width(m.width).Render("Error: " + m.err.Error())
 	}
@@ -212,7 +239,9 @@ func (m Model) content() string {
 	if !m.quitting {
 		parts = append(parts, "", m.help.View(m.keys))
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	// MaxWidth cuts off anything a screen failed to fit, so a narrow
+	// terminal never wraps lines behind the renderer's back.
+	return lipgloss.NewStyle().MaxWidth(m.width).Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
 func (m Model) bannerView() string {
