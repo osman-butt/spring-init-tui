@@ -35,3 +35,53 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Write access to osman-butt/homebrew-tap, to publish the cask.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+  # Publishes the apt repository on GitHub Pages, so that this works:
+  #
+  #   sudo apt install si
+  #
+  # The site is built from scratch every time: the packages of all releases
+  # are downloaded again and indexed, so the releases stay the only place
+  # that stores them.
+  apt:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write # deploy the site
+      id-token: write # lets Pages verify that the deployment comes from this workflow
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the packages of every release
+        # Naming the shell turns on pipefail, so a failed listing or download
+        # stops the job instead of publishing an incomplete repository.
+        shell: bash
+        run: |
+          mkdir -p site/pool/main/s/si
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '
+            .[] | select(.draft or .prerelease | not)
+                | .assets[] | select(.name | endswith(".deb"))
+                | .browser_download_url' |
+            xargs --no-run-if-empty -n 1 curl -fsSL --remote-name --output-dir site/pool/main/s/si
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build and sign the repository
+        run: scripts/apt-repo.sh site
+        env:
+          # The private key that signs the index. Its public half is
+          # published as key.asc.
+          APT_SIGNING_KEY: ${{ secrets.APT_SIGNING_KEY }}
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
