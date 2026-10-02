@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Mondays: catch vulnerabilities and Go releases published since the last push.
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -29,3 +32,54 @@ jobs:
 
       - name: Test
         run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 2026-07-20
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 2026-07-16
+        with:
+          go-version: stable
+
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0 2026-06-29
+        with:
+          version-file: .tool-versions
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 2026-07-20
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 2026-07-16
+        with:
+          go-version: stable
+
+      - name: Govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  # Builds every release target without publishing, so a broken GoReleaser
+  # config or a dependency that no longer compiles on Windows or macOS shows up
+  # here instead of when a tag is pushed.
+  release-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 2026-07-20
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 2026-07-16
+        with:
+          go-version: stable
+
+      - name: Check the GoReleaser config
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3 2026-07-29
+        with:
+          version-file: .tool-versions
+          args: check
+
+      - name: Build all targets
+        uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3 2026-07-29
+        with:
+          version-file: .tool-versions
+          args: build --snapshot --clean
