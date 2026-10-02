@@ -8,13 +8,32 @@ The project name is also the Maven artifact. The Java package is the group plus 
 
 ## Install
 
+The command is called `si`.
+
+### Download a release
+
+Download the archive for your system from the [releases page](https://github.com/osman-butt/spring-init-tui/releases). There are builds for Linux, macOS and Windows, each for `amd64` and `arm64`, named `spring-init-tui_<version>_<os>_<arch>`.
+
+Unpack it and put `si` on your `PATH`, for example on macOS with Apple silicon:
+
+```sh
+tar -xzf spring-init-tui_0.1.0_darwin_arm64.tar.gz si
+sudo mv si /usr/local/bin/
+si --version
+```
+
+To verify a download, get `checksums.txt` from the same release and run `shasum -a 256 -c checksums.txt --ignore-missing` (`sha256sum` on Linux).
+
+- **macOS:** if you downloaded the archive with a browser, macOS blocks the unsigned binary. Remove the quarantine flag with `xattr -d com.apple.quarantine si`.
+- **Windows PowerShell:** `si` is a built-in alias for `Set-Item`, so run `si.exe`.
+
+### With Go
+
 Requires Go 1.26 or newer.
 
 ```sh
 go install github.com/osman-butt/spring-init-tui/cmd/si@latest
 ```
-
-The command is called `si`.
 
 ## Usage
 
@@ -30,6 +49,8 @@ Then start the generated project:
 cd <project-name>
 ./mvnw spring-boot:run
 ```
+
+On Windows the last command is `.\mvnw.cmd spring-boot:run`.
 
 ## Keys
 
