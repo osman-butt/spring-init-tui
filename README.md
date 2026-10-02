@@ -2,6 +2,8 @@
 
 A terminal UI for [Spring Initializr](https://start.spring.io), built with Go and [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
+![Generating a Spring Boot project with si](demo/si.gif)
+
 Pick a project name, a group, a Java version and dependencies, and it generates a Maven project in a new directory.
 
 The project name is also the Maven artifact. The Java package is the group plus the name without `-`, `_` and `.`, so `spring-demo` in group `com.example` becomes `com.example.springdemo`.
@@ -76,3 +78,5 @@ On the dependency screen, just type to search:
 go run ./cmd/si
 go test ./...
 ```
+
+The demo GIF is recorded with [VHS](https://github.com/charmbracelet/vhs): `vhs demo/si.tape`.
