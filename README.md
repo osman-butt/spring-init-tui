@@ -10,15 +10,21 @@
 
 ## Install
 
-Download the archive for your operating system and CPU from the [latest release](https://github.com/osman-butt/spring-init-tui/releases/latest), unpack it, and move `si` to a directory on your `PATH`.
+With [Homebrew](https://brew.sh) on macOS or Linux:
 
-Or install with Go 1.26 or newer:
+```sh
+brew install osman-butt/tap/si
+```
+
+With Go 1.26 or newer:
 
 ```sh
 go install github.com/osman-butt/spring-init-tui/cmd/si@latest
 ```
 
-- **macOS:** a binary downloaded with a browser is blocked because it is not signed. Run `xattr -d com.apple.quarantine si` once to allow it.
+Or download the archive for your operating system and CPU from the [latest release](https://github.com/osman-butt/spring-init-tui/releases/latest), unpack it, and move `si` to a directory on your `PATH`.
+
+- **macOS:** a binary downloaded with a browser is blocked because it is not signed. Run `xattr -d com.apple.quarantine si` once to allow it. Homebrew does this for you.
 - **Windows PowerShell:** `si` is a built-in alias for `Set-Item`, so run `si.exe`.
 
 ## Usage
