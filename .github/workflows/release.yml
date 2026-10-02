@@ -18,9 +18,11 @@ jobs:
           fetch-depth: 0 # GoReleaser needs the tags and history for the changelog
           persist-credentials: false
 
+      # The newest Go release, not the minimum in go.mod, so that the binaries
+      # ship with the latest standard library security fixes.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 2026-07-16
         with:
-          go-version-file: go.mod
+          go-version: stable
 
       - name: Test
         run: go test -race ./...
