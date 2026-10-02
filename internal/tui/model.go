@@ -29,6 +29,7 @@ const (
 	screenName
 	screenGroup
 	screenPackage
+	screenBoot
 	screenJava
 	screenDeps
 	screenConfirm
@@ -65,6 +66,7 @@ type Model struct {
 	groupErr    error
 	packageName string
 	packageErr  error
+	bootCursor  int
 	javaCursor  int
 	selected    map[string]bool // dependency IDs
 	confirmYes  bool
@@ -179,6 +181,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	case metadataLoadedMsg:
 		m.metadata = msg.metadata
 		m.group.SetValue(cmp.Or(msg.metadata.DefaultGroupID, fallbackGroup))
+		m.bootCursor = m.defaultBootIndex()
 		m.javaCursor = m.defaultJavaIndex()
 		m.setScreen(screenName)
 		return m, tea.Batch(m.input.Focus(), m.deps.SetItems(depItems(msg.metadata.Dependencies)))
@@ -203,6 +206,8 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.updateGroup(msg)
 	case screenPackage:
 		return m.updatePackage(msg)
+	case screenBoot:
+		return m.updateBoot(msg)
 	case screenJava:
 		return m.updateJava(msg)
 	case screenDeps:
@@ -265,16 +270,17 @@ func (m *Model) syncKeys() {
 	onDeps := s == screenDeps
 	searching := onDeps && m.search.Value() != ""
 	typing := s == screenGroup || s == screenPackage // esc goes back, so only ctrl+c quits
+	choosing := s == screenBoot || s == screenJava
 
 	k := &m.keys
-	k.Up.SetEnabled(s == screenJava)
-	k.Down.SetEnabled(s == screenJava)
-	k.Move.SetEnabled(s == screenJava || onDeps)
+	k.Up.SetEnabled(choosing)
+	k.Down.SetEnabled(choosing)
+	k.Move.SetEnabled(choosing || onDeps)
 	k.Toggle.SetEnabled(onDeps)
 	k.ListNav.SetEnabled(onDeps)
 	// esc empties the search first and goes back only when it is empty.
 	k.ClearSearch.SetEnabled(searching)
-	k.Next.SetEnabled(s == screenName || typing || s == screenJava || onDeps)
+	k.Next.SetEnabled(s == screenName || typing || choosing || onDeps)
 	k.Switch.SetEnabled(s == screenConfirm)
 	k.Confirm.SetEnabled(s == screenConfirm)
 	k.Yes.SetEnabled(s == screenConfirm)
@@ -282,7 +288,7 @@ func (m *Model) syncKeys() {
 	// From the error screen there is only a way back when the answers
 	// exist, i.e. when generating failed rather than loading.
 	generateFailed := s == screenError && m.failed == screenGenerating
-	k.Back.SetEnabled(typing || s == screenJava || s == screenConfirm || (onDeps && !searching) || generateFailed)
+	k.Back.SetEnabled(typing || choosing || s == screenConfirm || (onDeps && !searching) || generateFailed)
 	k.Retry.SetEnabled(s == screenError)
 	// "q" is text on the screens with an input. On the name screen esc
 	// quits; on the others esc is taken, which leaves ctrl+c as the only
@@ -358,6 +364,8 @@ func (m Model) content() string {
 		body = m.groupView()
 	case screenPackage:
 		body = m.packageView()
+	case screenBoot:
+		body = m.bootView()
 	case screenJava:
 		body = m.javaView()
 	case screenDeps:

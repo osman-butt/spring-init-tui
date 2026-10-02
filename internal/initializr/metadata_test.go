@@ -43,6 +43,18 @@ func TestMetadata(t *testing.T) {
 		t.Errorf("User-Agent header = %q, want %q", gotUserAgent, userAgent)
 	}
 
+	wantBoot := []BootVersion{
+		{ID: "4.2.0-SNAPSHOT", Name: "4.2.0 (SNAPSHOT)"},
+		{ID: "4.2.0-M2", Name: "4.2.0 (M2)"},
+		{ID: "4.1.1", Name: "4.1.1"},
+		{ID: "4.0.8", Name: "4.0.8"},
+	}
+	if !slices.Equal(md.BootVersions, wantBoot) {
+		t.Errorf("BootVersions = %v, want %v", md.BootVersions, wantBoot)
+	}
+	if md.DefaultBootVersion != "4.1.1" {
+		t.Errorf("DefaultBootVersion = %q, want %q", md.DefaultBootVersion, "4.1.1")
+	}
 	if want := []string{"27", "25", "21", "17"}; !slices.Equal(md.JavaVersions, want) {
 		t.Errorf("JavaVersions = %v, want %v", md.JavaVersions, want)
 	}

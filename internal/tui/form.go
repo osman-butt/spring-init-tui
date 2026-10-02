@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -162,7 +163,7 @@ func (m Model) updatePackage(msg tea.Msg) (Model, tea.Cmd) {
 			}
 			m.packageName = name
 			m.pkg.Blur()
-			m.setScreen(screenJava)
+			m.setScreen(screenBoot)
 			return m, nil
 		}
 		m.packageErr = nil
@@ -197,6 +198,71 @@ func (m Model) nameView() string {
 	return strings.Join(lines, "\n")
 }
 
+// choicesView lists the options of a pick-one screen and marks the one under
+// the cursor.
+func (m Model) choicesView(header string, options []string, cursor int) string {
+	lines := []string{m.styles.header.Render(header)}
+	for i, option := range options {
+		if i == cursor {
+			lines = append(lines, m.styles.selected.Render("> "+option))
+		} else {
+			lines = append(lines, "  "+option)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// defaultBootIndex returns the position of the metadata's default Spring
+// Boot version, or 0 if the default is not among the offered versions.
+func (m Model) defaultBootIndex() int {
+	return max(slices.IndexFunc(m.metadata.BootVersions, func(v initializr.BootVersion) bool {
+		return v.ID == m.metadata.DefaultBootVersion
+	}), 0)
+}
+
+// boot returns the chosen Spring Boot version. It is empty when the metadata
+// offers none, which leaves the choice to Initializr.
+func (m Model) boot() initializr.BootVersion {
+	if m.bootCursor < len(m.metadata.BootVersions) {
+		return m.metadata.BootVersions[m.bootCursor]
+	}
+	return initializr.BootVersion{}
+}
+
+// bootLabel is how a Spring Boot version is shown.
+func bootLabel(v initializr.BootVersion) string {
+	return cmp.Or(v.Name, v.ID)
+}
+
+func (m Model) updateBoot(msg tea.Msg) (Model, tea.Cmd) {
+	k, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+	switch {
+	case key.Matches(k, m.keys.Up):
+		m.bootCursor = max(m.bootCursor-1, 0)
+	case key.Matches(k, m.keys.Down):
+		m.bootCursor = min(m.bootCursor+1, len(m.metadata.BootVersions)-1)
+	case key.Matches(k, m.keys.Next):
+		m.setScreen(screenJava)
+	case key.Matches(k, m.keys.Back):
+		m.setScreen(screenPackage)
+		return m, m.pkg.Focus()
+	case key.Matches(k, m.keys.Quit):
+		return m.quit()
+	}
+	return m, nil
+}
+
+func (m Model) bootView() string {
+	options := make([]string, len(m.metadata.BootVersions))
+	for i, v := range m.metadata.BootVersions {
+		options[i] = bootLabel(v)
+	}
+	return m.choicesView("Spring Boot version", options, m.bootCursor)
+}
+
 // defaultJavaIndex returns the position of the metadata's default Java
 // version, or 0 if the default is not among the offered versions.
 func (m Model) defaultJavaIndex() int {
@@ -224,8 +290,7 @@ func (m Model) updateJava(msg tea.Msg) (Model, tea.Cmd) {
 		m.setScreen(screenDeps)
 		return m, m.search.Focus()
 	case key.Matches(k, m.keys.Back):
-		m.setScreen(screenPackage)
-		return m, m.pkg.Focus()
+		m.setScreen(screenBoot)
 	case key.Matches(k, m.keys.Quit):
 		return m.quit()
 	}
@@ -233,15 +298,7 @@ func (m Model) updateJava(msg tea.Msg) (Model, tea.Cmd) {
 }
 
 func (m Model) javaView() string {
-	lines := []string{m.styles.header.Render("Java version")}
-	for i, version := range m.metadata.JavaVersions {
-		if i == m.javaCursor {
-			lines = append(lines, m.styles.selected.Render("> "+version))
-		} else {
-			lines = append(lines, "  "+version)
-		}
-	}
-	return strings.Join(lines, "\n")
+	return m.choicesView("Java version", m.metadata.JavaVersions, m.javaCursor)
 }
 
 func (m Model) updateConfirm(msg tea.Msg) (Model, tea.Cmd) {
@@ -291,6 +348,7 @@ func (m Model) summaryView() string {
 		label("Artifact      ") + m.name,
 		label("Group         ") + m.groupID,
 		label("Package       ") + m.packageName,
+		label("Spring Boot   ") + bootLabel(m.boot()),
 		label("Java          ") + m.javaVersion(),
 		// Wrap a long list under its own column instead of cutting it off.
 		lipgloss.JoinHorizontal(lipgloss.Top, label("Dependencies  "),

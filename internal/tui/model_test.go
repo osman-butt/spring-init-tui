@@ -37,7 +37,13 @@ func (f *fakeBackend) Generate(_ context.Context, req initializr.Request, dest s
 }
 
 var testMetadata = initializr.Metadata{
-	DefaultGroupID:     "com.example",
+	DefaultGroupID: "com.example",
+	BootVersions: []initializr.BootVersion{
+		{ID: "4.2.0-M2", Name: "4.2.0 (M2)"},
+		{ID: "4.1.1", Name: "4.1.1"},
+		{ID: "4.0.8", Name: "4.0.8"},
+	},
+	DefaultBootVersion: "4.1.1",
 	JavaVersions:       []string{"25", "21", "17"},
 	DefaultJavaVersion: "17",
 	Dependencies: []initializr.Dependency{
@@ -115,10 +121,16 @@ func typeText(t *testing.T, m Model, text string) Model {
 // a directory where no project exists yet.
 func loaded(t *testing.T) Model {
 	t.Helper()
-	m := New(&fakeBackend{metadata: testMetadata})
+	return loadedWith(t, testMetadata)
+}
+
+// loadedWith is loaded for a backend that offers md.
+func loadedWith(t *testing.T, md initializr.Metadata) Model {
+	t.Helper()
+	m := New(&fakeBackend{metadata: md})
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
+	m, _ = step(t, m, metadataLoadedMsg{md})
 	return m
 }
 
@@ -407,7 +419,7 @@ func TestPackageIsDerivedFromGroupAndName(t *testing.T) {
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
 	m = keys(t, typeText(t, m, "spring-demo"), "enter")
-	m = keys(t, replaceGroup(t, m, " dev.osman "), "enter", "enter", "enter", "enter")
+	m = keys(t, replaceGroup(t, m, " dev.osman "), "enter", "enter", "enter", "enter", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want confirm", m.screen)
 	}
@@ -424,6 +436,7 @@ func TestPackageIsDerivedFromGroupAndName(t *testing.T) {
 		Name:        "spring-demo",
 		GroupID:     "dev.osman",
 		PackageName: "dev.osman.springdemo",
+		BootVersion: "4.1.1",
 		JavaVersion: "17",
 	}
 	if len(backend.requests) != 1 || !reflect.DeepEqual(backend.requests[0], want) {
@@ -468,8 +481,8 @@ func TestPackageIsPrefilledFromGroupAndName(t *testing.T) {
 	}
 
 	m = keys(t, m, "enter")
-	if m.screen != screenJava || m.packageName != "com.example.demo" {
-		t.Errorf("screen = %v, packageName = %q; want java screen with com.example.demo", m.screen, m.packageName)
+	if m.screen != screenBoot || m.packageName != "com.example.demo" {
+		t.Errorf("screen = %v, packageName = %q; want boot screen with com.example.demo", m.screen, m.packageName)
 	}
 }
 
@@ -496,7 +509,7 @@ func TestEditedPackageIsKept(t *testing.T) {
 		t.Fatalf("package input = %q, want the typed package to be kept", got)
 	}
 
-	m = keys(t, m, "enter", "enter", "enter")
+	m = keys(t, m, "enter", "enter", "enter", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want confirm", m.screen)
 	}
@@ -549,8 +562,76 @@ func TestPackageAcceptsLettersThatAreShortcutsElsewhere(t *testing.T) {
 	}
 }
 
-func TestJavaVersionSelection(t *testing.T) {
+// onBoot returns a model on the Spring Boot screen.
+func onBoot(t *testing.T) Model {
+	t.Helper()
 	m := keys(t, onPackage(t), "enter")
+	if m.screen != screenBoot {
+		t.Fatalf("screen = %v, want boot", m.screen)
+	}
+	return m
+}
+
+func TestBootVersionSelection(t *testing.T) {
+	m := onBoot(t)
+	if got := m.boot().ID; got != "4.1.1" {
+		t.Errorf("preselected Spring Boot version = %q, want the default 4.1.1", got)
+	}
+	out := plain(m)
+	for _, want := range []string{"Spring Boot version", "  4.2.0 (M2)", "> 4.1.1", "  4.0.8"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("boot view is missing %q:\n%s", want, out)
+		}
+	}
+
+	m = keys(t, m, "up", "up") // stops at the first entry
+	if got := m.boot().ID; got != "4.2.0-M2" {
+		t.Errorf("after up up: %q, want 4.2.0-M2", got)
+	}
+	m = keys(t, m, "j", "j", "j") // stops at the last entry
+	if got := m.boot().ID; got != "4.0.8" {
+		t.Errorf("after j j j: %q, want 4.0.8", got)
+	}
+	m = keys(t, m, "k")
+	if got := m.boot().ID; got != "4.1.1" {
+		t.Errorf("after k: %q, want 4.1.1", got)
+	}
+
+	m = keys(t, m, "down", "enter")
+	if m.screen != screenJava {
+		t.Fatalf("screen = %v, want java", m.screen)
+	}
+	if got := m.request().BootVersion; got != "4.0.8" {
+		t.Errorf("request BootVersion = %q, want 4.0.8", got)
+	}
+}
+
+func TestBootDefaultFallsBackToFirstVersion(t *testing.T) {
+	md := testMetadata
+	md.DefaultBootVersion = "3.5.0"
+	if got := loadedWith(t, md).boot().ID; got != "4.2.0-M2" {
+		t.Errorf("boot().ID = %q, want the first version 4.2.0-M2", got)
+	}
+}
+
+// Without a choice the request names no version and Initializr picks one.
+func TestNoBootVersionsOffered(t *testing.T) {
+	md := testMetadata
+	md.BootVersions, md.DefaultBootVersion = nil, ""
+	m := keys(t, typeText(t, loadedWith(t, md), "demo"), "enter", "enter", "enter", "enter", "enter")
+	if m.screen != screenDeps {
+		t.Fatalf("screen = %v, want deps", m.screen)
+	}
+	if got := m.request().BootVersion; got != "" {
+		t.Errorf("request BootVersion = %q, want it empty", got)
+	}
+	if out := plain(m); !strings.Contains(out, "2 dependencies") || strings.Contains(out, "not available") {
+		t.Errorf("every dependency should be offered:\n%s", out)
+	}
+}
+
+func TestJavaVersionSelection(t *testing.T) {
+	m := keys(t, onBoot(t), "enter")
 	if m.screen != screenJava {
 		t.Fatalf("screen = %v, want java", m.screen)
 	}
@@ -596,7 +677,7 @@ func TestJavaDefaultFallsBackToFirstVersion(t *testing.T) {
 }
 
 func TestBackNavigation(t *testing.T) {
-	m := keys(t, replaceGroup(t, onGroup(t), "dev.osman"), "enter", "enter", "up", "enter", "tab", "enter")
+	m := keys(t, replaceGroup(t, onGroup(t), "dev.osman"), "enter", "enter", "down", "enter", "up", "enter", "tab", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
@@ -611,9 +692,14 @@ func TestBackNavigation(t *testing.T) {
 		t.Fatalf("esc on deps: screen = %v, java = %q; want java screen with 21", m.screen, m.javaVersion())
 	}
 
+	m = keys(t, m, "esc")
+	if m.screen != screenBoot || m.boot().ID != "4.0.8" {
+		t.Fatalf("esc on java: screen = %v, boot = %q; want boot screen with 4.0.8", m.screen, m.boot().ID)
+	}
+
 	m, cmd := step(t, m, press("esc"))
 	if m.screen != screenPackage || m.pkg.Value() != "dev.osman.demo" {
-		t.Fatalf("esc on java: screen = %v, package = %q; want package screen with dev.osman.demo", m.screen, m.pkg.Value())
+		t.Fatalf("esc on boot: screen = %v, package = %q; want package screen with dev.osman.demo", m.screen, m.pkg.Value())
 	}
 	if !m.pkg.Focused() || cmd == nil {
 		t.Error("the package input should be focused again")
@@ -642,11 +728,11 @@ func TestBackNavigation(t *testing.T) {
 func TestQuitFromFormScreens(t *testing.T) {
 	// q is text on the package and dependency screens, so ctrl+c quits there.
 	quitKeys := map[screen]string{
-		screenPackage: "ctrl+c", screenJava: "q", screenDeps: "ctrl+c", screenConfirm: "q",
+		screenPackage: "ctrl+c", screenBoot: "q", screenJava: "q", screenDeps: "ctrl+c", screenConfirm: "q",
 	}
 
 	m := onGroup(t)
-	for _, screen := range []screen{screenPackage, screenJava, screenDeps, screenConfirm} {
+	for _, screen := range []screen{screenPackage, screenBoot, screenJava, screenDeps, screenConfirm} {
 		m = keys(t, m, "enter")
 		if m.screen != screen {
 			t.Fatalf("screen = %v, want %v", m.screen, screen)
@@ -659,7 +745,7 @@ func TestQuitFromFormScreens(t *testing.T) {
 // onDeps returns a model on the dependency screen.
 func onDeps(t *testing.T) Model {
 	t.Helper()
-	m := keys(t, onPackage(t), "enter", "enter")
+	m := keys(t, onBoot(t), "enter", "enter")
 	if m.screen != screenDeps {
 		t.Fatalf("screen = %v, want deps", m.screen)
 	}
@@ -819,7 +905,7 @@ func TestDepsArrowsAndPagesMoveWhileSearching(t *testing.T) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter", "enter")
 	if m.deps.Paginator.TotalPages < 2 {
 		t.Fatalf("test needs several pages, got %d", m.deps.Paginator.TotalPages)
 	}
@@ -869,7 +955,7 @@ func TestSummaryShowsAnswers(t *testing.T) {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
 	out := plain(m)
-	for _, want := range []string{"demo", "com.example", "com.example.demo", "17", "web, data-jpa"} {
+	for _, want := range []string{"demo", "com.example", "com.example.demo", "4.1.1", "17", "web, data-jpa"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary is missing %q:\n%s", want, out)
 		}
@@ -885,7 +971,7 @@ func onConfirm(t *testing.T) (Model, *fakeBackend) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter", "tab", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter", "enter", "tab", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want confirm", m.screen)
 	}
@@ -914,6 +1000,7 @@ func TestConfirmYesGeneratesTheProject(t *testing.T) {
 		Name:         "demo",
 		GroupID:      "com.example",
 		PackageName:  "com.example.demo",
+		BootVersion:  "4.1.1",
 		JavaVersion:  "17",
 		Dependencies: []string{"web"},
 	}
@@ -1133,6 +1220,8 @@ func TestViewFitsWindow(t *testing.T) {
 		check("long package", m)
 		check("invalid package", keys(t, typeText(t, m, "-"), "enter"))
 		m = keys(t, m, "enter")
+		check("boot", m)
+		m = keys(t, m, "enter")
 		check("java", m)
 		m = keys(t, m, "enter")
 		check("deps", m)
@@ -1161,7 +1250,7 @@ func TestDepsListHeightStaysTheSame(t *testing.T) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{manyDeps()})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "enter", "enter")
 
 	want := lipgloss.Height(m.View().Content)
 	variants := map[string]Model{

@@ -15,6 +15,7 @@ func (m Model) request() initializr.Request {
 		Name:         m.name,
 		GroupID:      m.groupID,
 		PackageName:  m.packageName,
+		BootVersion:  m.boot().ID,
 		JavaVersion:  m.javaVersion(),
 		Dependencies: m.selectedDeps(),
 	}
