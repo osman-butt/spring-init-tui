@@ -1,0 +1,59 @@
+{
+  "javaVersion": {
+    "type": "single-select",
+    "default": "17",
+    "values": [
+      {
+        "id": "27",
+        "name": "27"
+      },
+      {
+        "id": "25",
+        "name": "25"
+      },
+      {
+        "id": "21",
+        "name": "21"
+      },
+      {
+        "id": "17",
+        "name": "17"
+      }
+    ]
+  },
+  "dependencies": {
+    "type": "hierarchical-multi-select",
+    "values": [
+      {
+        "name": "Developer Tools",
+        "values": [
+          {
+            "id": "native",
+            "name": "GraalVM Native Support",
+            "description": "Support for compiling Spring applications to native executables using the GraalVM native-image compiler."
+          },
+          {
+            "id": "dgs-codegen",
+            "name": "GraphQL DGS Code Generation",
+            "description": "Generate data types and type-safe APIs for querying GraphQL APIs by parsing schema files."
+          }
+        ]
+      },
+      {
+        "name": "Web",
+        "values": [
+          {
+            "id": "web",
+            "name": "Spring Web",
+            "description": "Build web, including RESTful, applications using Spring MVC. Uses Apache Tomcat as the default embedded container."
+          },
+          {
+            "id": "webflux",
+            "name": "Spring Reactive Web",
+            "description": "Build reactive web applications with Spring WebFlux and Netty."
+          }
+        ]
+      }
+    ]
+  }
+}
