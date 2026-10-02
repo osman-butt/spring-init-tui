@@ -1,4 +1,4 @@
-# spring-init-tui
+# SI 
 
 [![CI](https://github.com/osman-butt/spring-init-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/osman-butt/spring-init-tui/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/osman-butt/spring-init-tui)](https://github.com/osman-butt/spring-init-tui/releases/latest)
