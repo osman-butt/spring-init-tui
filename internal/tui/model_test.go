@@ -9,9 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
-	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -67,6 +65,10 @@ func press(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyTab}
 	case "backspace":
 		return tea.KeyPressMsg{Code: tea.KeyBackspace}
+	case "pgup":
+		return tea.KeyPressMsg{Code: tea.KeyPgUp}
+	case "pgdown":
+		return tea.KeyPressMsg{Code: tea.KeyPgDown}
 	case "space":
 		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
@@ -98,31 +100,6 @@ func keys(t *testing.T, m Model, keys ...string) Model {
 		m, _ = step(t, m, press(k))
 	}
 	return m
-}
-
-// settle runs cmd and feeds what it produces back into the model, the way
-// the Bubble Tea runtime would. Commands that take a while, such as cursor
-// blink timers, are skipped.
-func settle(t *testing.T, m Model, cmd tea.Cmd) Model {
-	t.Helper()
-	if cmd == nil {
-		return m
-	}
-	done := make(chan tea.Msg, 1)
-	go func() { done <- cmd() }()
-	select {
-	case msg := <-done:
-		if batch, ok := msg.(tea.BatchMsg); ok {
-			for _, c := range batch {
-				m = settle(t, m, c)
-			}
-			return m
-		}
-		next, nextCmd := step(t, m, msg)
-		return settle(t, next, nextCmd)
-	case <-time.After(50 * time.Millisecond):
-		return m
-	}
 }
 
 func typeText(t *testing.T, m Model, text string) Model {
@@ -503,7 +480,7 @@ func TestJavaDefaultFallsBackToFirstVersion(t *testing.T) {
 }
 
 func TestBackNavigation(t *testing.T) {
-	m := keys(t, replaceGroup(t, onGroup(t), "dev.osman"), "enter", "up", "enter", "space", "enter")
+	m := keys(t, replaceGroup(t, onGroup(t), "dev.osman"), "enter", "up", "enter", "tab", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
@@ -539,13 +516,16 @@ func TestBackNavigation(t *testing.T) {
 }
 
 func TestQuitFromFormScreens(t *testing.T) {
+	// q is search text on the dependency screen, so ctrl+c quits there.
+	quitKeys := map[screen]string{screenJava: "q", screenDeps: "ctrl+c", screenConfirm: "q"}
+
 	m := onGroup(t)
 	for _, screen := range []screen{screenJava, screenDeps, screenConfirm} {
 		m = keys(t, m, "enter")
 		if m.screen != screen {
 			t.Fatalf("screen = %v, want %v", m.screen, screen)
 		}
-		_, cmd := step(t, m, press("q"))
+		_, cmd := step(t, m, press(quitKeys[screen]))
 		assertQuits(t, cmd)
 	}
 }
@@ -562,16 +542,22 @@ func onDeps(t *testing.T) Model {
 
 func TestDepsToggle(t *testing.T) {
 	m := onDeps(t)
+	if !m.search.Focused() {
+		t.Error("the search input should be focused on the dependency screen")
+	}
 	if got := m.selectedDeps(); len(got) != 0 {
 		t.Fatalf("selectedDeps() = %v, want none", got)
 	}
-	if out := plain(m); !strings.Contains(out, "[ ] Spring Web") || !strings.Contains(out, "Selected: none") {
-		t.Errorf("deps view should list unchecked items:\n%s", out)
+	out := plain(m)
+	for _, want := range []string{"Type to search", "2 dependencies", "[ ] Spring Web", "Selected: none"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("deps view is missing %q:\n%s", want, out)
+		}
 	}
 
-	m = keys(t, m, "space")
+	m = keys(t, m, "tab")
 	if got := m.selectedDeps(); !slices.Equal(got, []string{"web"}) {
-		t.Errorf("after space: selectedDeps() = %v, want [web]", got)
+		t.Errorf("after tab: selectedDeps() = %v, want [web]", got)
 	}
 	if out := plain(m); !strings.Contains(out, "[x] Spring Web") || !strings.Contains(out, "Selected (1): web") {
 		t.Errorf("deps view should show web as checked:\n%s", out)
@@ -582,14 +568,14 @@ func TestDepsToggle(t *testing.T) {
 		t.Errorf("after down, tab: selectedDeps() = %v, want [web data-jpa]", got)
 	}
 
-	m = keys(t, m, "space")
+	m = keys(t, m, "tab")
 	if got := m.selectedDeps(); !slices.Equal(got, []string{"web"}) {
 		t.Errorf("after toggling data-jpa off: selectedDeps() = %v, want [web]", got)
 	}
 }
 
 func TestDepsKeepMetadataOrder(t *testing.T) {
-	m := keys(t, onDeps(t), "down", "space", "up", "space")
+	m := keys(t, onDeps(t), "down", "tab", "up", "tab")
 	if got := m.selectedDeps(); !slices.Equal(got, []string{"web", "data-jpa"}) {
 		t.Errorf("selectedDeps() = %v, want metadata order [web data-jpa]", got)
 	}
@@ -597,46 +583,112 @@ func TestDepsKeepMetadataOrder(t *testing.T) {
 
 func TestDepsToggleDoesNotChangeEarlierModels(t *testing.T) {
 	before := onDeps(t)
-	after := keys(t, before, "space")
+	after := keys(t, before, "tab")
 	if len(before.selectedDeps()) != 0 || len(after.selectedDeps()) != 1 {
 		t.Errorf("before = %v, after = %v; want the toggle to affect only the new model",
 			before.selectedDeps(), after.selectedDeps())
 	}
 }
 
-func TestDepsFilterTakesOverTheKeyboard(t *testing.T) {
-	m := keys(t, onDeps(t), "/")
-	if m.deps.FilterState() != list.Filtering {
-		t.Fatalf("filter state = %v, want filtering", m.deps.FilterState())
-	}
-
-	// q and space are filter text now, not shortcuts.
-	m, cmd := step(t, m, press("q"))
-	if cmd != nil {
-		if _, quit := cmd().(tea.QuitMsg); quit {
-			t.Fatal("q quit the program while typing a filter")
-		}
-	}
-	m = keys(t, m, "space")
-	if m.screen != screenDeps || len(m.selectedDeps()) != 0 {
-		t.Errorf("screen = %v, deps = %v; typing a filter should not select anything", m.screen, m.selectedDeps())
-	}
-	if got := m.deps.FilterInput.Value(); got != "q " {
-		t.Errorf("filter text = %q, want %q", got, "q ")
-	}
-
+// The flow the search is built for: type, tab, clear, type again, tab.
+func TestDepsSearchSelectSearchAgain(t *testing.T) {
+	m := typeText(t, onDeps(t), "jpa")
 	out := plain(m)
-	if !strings.Contains(out, "apply filter") || strings.Contains(out, "q quit") {
-		t.Errorf("footer should show the filter keys only:\n%s", out)
+	if strings.Contains(out, "Spring Web") || !strings.Contains(out, "Spring Data JPA") {
+		t.Errorf("typing jpa should list only the JPA dependency:\n%s", out)
+	}
+	if !strings.Contains(out, "1 of 2") {
+		t.Errorf("deps view should count the matches:\n%s", out)
 	}
 
-	m = keys(t, m, "esc")
-	if m.screen != screenDeps || m.deps.FilterState() != list.Unfiltered {
-		t.Errorf("esc while filtering: screen = %v, filter = %v; want deps, unfiltered", m.screen, m.deps.FilterState())
+	// The cursor is on the best match, so tab selects it straight away.
+	m = keys(t, m, "tab")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"data-jpa"}) {
+		t.Fatalf("selectedDeps() = %v, want [data-jpa]", got)
+	}
+	if got := m.search.Value(); got != "jpa" {
+		t.Errorf("search = %q, want it to stay after selecting", got)
+	}
+
+	m = keys(t, m, "backspace", "backspace", "backspace")
+	if out := plain(m); !strings.Contains(out, "Spring Web") || !strings.Contains(out, "2 dependencies") {
+		t.Errorf("an empty search should list everything again:\n%s", out)
+	}
+
+	m = keys(t, typeText(t, m, "web"), "tab")
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"web", "data-jpa"}) {
+		t.Errorf("selectedDeps() = %v, want [web data-jpa]", got)
+	}
+	if m.screen != screenDeps {
+		t.Errorf("screen = %v, want deps", m.screen)
 	}
 }
 
-func TestDepsFilterByTyping(t *testing.T) {
+func TestDepsSearchTakesLettersAndSpace(t *testing.T) {
+	m := typeText(t, onDeps(t), "q")
+	m = keys(t, m, "space")
+	m = typeText(t, m, "jk/")
+	if m.screen != screenDeps || len(m.selectedDeps()) != 0 {
+		t.Fatalf("screen = %v, deps = %v; typing should neither leave the screen nor select", m.screen, m.selectedDeps())
+	}
+	if got := m.search.Value(); got != "q jk/" {
+		t.Errorf("search = %q, want %q", got, "q jk/")
+	}
+
+	out := plain(m)
+	if strings.Contains(out, "q quit") || !strings.Contains(out, "ctrl+c quit") {
+		t.Errorf("footer should offer ctrl+c, not q, on the dependency screen:\n%s", out)
+	}
+	if !strings.Contains(out, "No matches.") || !strings.Contains(out, "0 of 2") {
+		t.Errorf("deps view should say that nothing matches:\n%s", out)
+	}
+
+	// Nothing under the cursor, so tab has nothing to select.
+	if m = keys(t, m, "tab"); len(m.selectedDeps()) != 0 {
+		t.Errorf("selectedDeps() = %v, want none", m.selectedDeps())
+	}
+}
+
+func TestDepsEscClearsSearchBeforeGoingBack(t *testing.T) {
+	m := keys(t, typeText(t, onDeps(t), "jpa"), "tab")
+	if out := plain(m); !strings.Contains(out, "esc clear search") || strings.Contains(out, "esc back") {
+		t.Errorf("footer should offer to clear the search:\n%s", out)
+	}
+
+	m = keys(t, m, "esc")
+	if m.screen != screenDeps || m.search.Value() != "" {
+		t.Fatalf("first esc: screen = %v, search = %q; want deps with an empty search", m.screen, m.search.Value())
+	}
+	if got := m.selectedDeps(); !slices.Equal(got, []string{"data-jpa"}) {
+		t.Errorf("clearing the search changed the selection: %v", got)
+	}
+	out := plain(m)
+	if !strings.Contains(out, "Spring Web") || !strings.Contains(out, "esc back") {
+		t.Errorf("after clearing, everything is listed and esc goes back:\n%s", out)
+	}
+
+	m = keys(t, m, "esc")
+	if m.screen != screenJava || m.search.Focused() {
+		t.Errorf("second esc: screen = %v, search focused = %v; want java", m.screen, m.search.Focused())
+	}
+}
+
+func TestDepsSearchSurvivesConfirmAndBack(t *testing.T) {
+	m := keys(t, typeText(t, onDeps(t), "jpa"), "tab", "enter")
+	if m.screen != screenConfirm || m.search.Focused() {
+		t.Fatalf("screen = %v, search focused = %v; want confirm", m.screen, m.search.Focused())
+	}
+
+	m, cmd := step(t, m, press("esc"))
+	if m.screen != screenDeps || !m.search.Focused() || cmd == nil {
+		t.Fatalf("esc on confirm: screen = %v, search focused = %v; want deps with a focused search", m.screen, m.search.Focused())
+	}
+	if out := plain(m); m.search.Value() != "jpa" || strings.Contains(out, "Spring Web") {
+		t.Errorf("the search should still be applied:\n%s", out)
+	}
+}
+
+func TestDepsArrowsAndPagesMoveWhileSearching(t *testing.T) {
 	m := New(&fakeBackend{})
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -646,71 +698,37 @@ func TestDepsFilterByTyping(t *testing.T) {
 		t.Fatalf("test needs several pages, got %d", m.deps.Paginator.TotalPages)
 	}
 
-	m = keys(t, m, "/")
-	for _, r := range "name 07" {
-		var cmd tea.Cmd
-		m, cmd = step(t, m, press(string(r)))
-		m = settle(t, m, cmd)
+	m = keys(t, m, "pgdown")
+	if m.deps.Paginator.Page != 1 {
+		t.Errorf("page after pgdown = %d, want 1", m.deps.Paginator.Page)
+	}
+	m = keys(t, m, "pgup")
+	if m.deps.Paginator.Page != 0 {
+		t.Errorf("page after pgup = %d, want 0", m.deps.Paginator.Page)
 	}
 
-	out := plain(m)
-	if !strings.Contains(out, "Display Name 07") || strings.Contains(out, "Display Name 08") {
+	// The pages follow the matches as soon as the text changes.
+	all := m.deps.Paginator.TotalPages
+	m = typeText(t, m, "name 0")
+	matches := m.deps.VisibleItems()
+	if len(matches) < 3 || len(matches) >= 60 || m.deps.Paginator.TotalPages >= all {
+		t.Fatalf("matches = %d, pages = %d (of %d); want a narrowed list", len(matches), m.deps.Paginator.TotalPages, all)
+	}
+
+	// The arrows move through the matches without leaving the search.
+	m = keys(t, m, "down", "down", "tab")
+	third := matches[2].(depItem).ID
+	if got := m.selectedDeps(); !slices.Equal(got, []string{third}) {
+		t.Errorf("selectedDeps() = %v, want the third match %s", got, third)
+	}
+
+	m = typeText(t, m, "7")
+	if m.deps.Paginator.TotalPages != 1 || len(m.deps.VisibleItems()) != 1 {
+		t.Errorf("pages = %d, matches = %d after narrowing to one; want 1 and 1",
+			m.deps.Paginator.TotalPages, len(m.deps.VisibleItems()))
+	}
+	if out := plain(m); !strings.Contains(out, "Display Name 07") || strings.Contains(out, "Display Name 08") {
 		t.Errorf("only dependency 07 should be listed:\n%s", out)
-	}
-	if m.deps.Paginator.TotalPages != 1 {
-		t.Errorf("TotalPages = %d after filtering down to one match, want 1", m.deps.Paginator.TotalPages)
-	}
-
-	m = keys(t, m, "enter", "space")
-	if m.deps.FilterState() != list.FilterApplied {
-		t.Fatalf("filter state = %v, want applied", m.deps.FilterState())
-	}
-	if got := m.selectedDeps(); !slices.Equal(got, []string{"dependency-with-a-long-identifier-07"}) {
-		t.Errorf("selectedDeps() = %v, want dependency 07", got)
-	}
-}
-
-func TestDepsAppliedFilter(t *testing.T) {
-	m := onDeps(t)
-	m.deps.SetFilterText("jpa")
-	m.syncKeys()
-	if m.deps.FilterState() != list.FilterApplied {
-		t.Fatalf("filter state = %v, want applied", m.deps.FilterState())
-	}
-	out := plain(m)
-	if strings.Contains(out, "Spring Web") || !strings.Contains(out, "Spring Data JPA") {
-		t.Errorf("only the JPA dependency should be listed:\n%s", out)
-	}
-	if !strings.Contains(out, "clear filter") {
-		t.Errorf("footer should offer to clear the filter:\n%s", out)
-	}
-
-	// The cursor is on the first match, not on the first dependency.
-	m = keys(t, m, "space")
-	if got := m.selectedDeps(); !slices.Equal(got, []string{"data-jpa"}) {
-		t.Errorf("selectedDeps() = %v, want [data-jpa]", got)
-	}
-
-	// esc clears the filter first, and only then goes back.
-	m = keys(t, m, "esc")
-	if m.screen != screenDeps || m.deps.FilterState() != list.Unfiltered {
-		t.Fatalf("first esc: screen = %v, filter = %v; want deps, unfiltered", m.screen, m.deps.FilterState())
-	}
-	if got := m.selectedDeps(); !slices.Equal(got, []string{"data-jpa"}) {
-		t.Errorf("clearing the filter changed the selection: %v", got)
-	}
-	m = keys(t, m, "esc")
-	if m.screen != screenJava {
-		t.Errorf("second esc: screen = %v, want java", m.screen)
-	}
-}
-
-func TestDepsFilterWithoutMatches(t *testing.T) {
-	m := onDeps(t)
-	m.deps.SetFilterText("no such dependency")
-	m = keys(t, m, "space")
-	if got := m.selectedDeps(); len(got) != 0 {
-		t.Errorf("selectedDeps() = %v, want none", got)
 	}
 }
 
@@ -720,7 +738,7 @@ func TestSummaryShowsAnswers(t *testing.T) {
 		t.Errorf("summary without dependencies should say none:\n%s", out)
 	}
 
-	m = keys(t, onDeps(t), "space", "down", "space", "enter")
+	m = keys(t, onDeps(t), "tab", "down", "tab", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want summary", m.screen)
 	}
@@ -741,7 +759,7 @@ func onConfirm(t *testing.T) (Model, *fakeBackend) {
 	m.exists = func(string) bool { return false }
 	m, _ = step(t, m, tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = step(t, m, metadataLoadedMsg{testMetadata})
-	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "space", "enter")
+	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter", "tab", "enter")
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want confirm", m.screen)
 	}
@@ -976,11 +994,12 @@ func TestViewFitsWindow(t *testing.T) {
 		check("java", m)
 		m = keys(t, m, "enter")
 		check("deps", m)
-		check("deps filter", keys(t, m, "/", "x"))
+		check("deps search", typeText(t, m, "name 1"))
+		check("deps search without matches", typeText(t, m, "zzz"))
 
 		// Select a few pages worth of dependencies.
 		for range 3 {
-			m = keys(t, m, "space", "down", "space", "down", "space", "right")
+			m = keys(t, m, "tab", "down", "tab", "down", "tab", "pgdown")
 		}
 		check("deps with selection", m)
 		m = keys(t, m, "enter")
@@ -1003,9 +1022,12 @@ func TestDepsListHeightStaysTheSame(t *testing.T) {
 	m = keys(t, typeText(t, m, "demo"), "enter", "enter", "enter")
 
 	want := lipgloss.Height(m.View().Content)
-	last := keys(t, m, "G")
-	m.deps.SetFilterText("05")
-	for name, variant := range map[string]Model{"last page": last, "one match": m, "typing filter": keys(t, m, "/")} {
+	variants := map[string]Model{
+		"next page":  keys(t, m, "pgdown"),
+		"one match":  typeText(t, m, "name 05"),
+		"no matches": typeText(t, m, "zzz"),
+	}
+	for name, variant := range variants {
 		if got := lipgloss.Height(variant.View().Content); got != want {
 			t.Errorf("%s: frame is %d lines, want %d", name, got, want)
 		}

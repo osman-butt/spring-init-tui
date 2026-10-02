@@ -9,33 +9,63 @@ import (
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"github.com/osman-butt/spring-init-tui/internal/initializr"
 )
 
-// depsMaxHeight caps the dependency list so the inline UI stays compact on
-// tall terminals.
-const depsMaxHeight = 14
+const (
+	// depsMaxRows caps the dependency list so the inline UI stays compact
+	// on tall terminals.
+	depsMaxRows = 12
+
+	// depsChromeHeight is the number of lines depsView draws around the
+	// rows: header, search input and match count above, page dots and the
+	// selection below.
+	depsChromeHeight = 5
+)
 
 type depItem struct{ initializr.Dependency }
 
-// FilterValue is what the list's "/" filter matches against.
+// FilterValue is what the search matches against.
 func (d depItem) FilterValue() string { return d.Name + " " + d.ID }
 
+// newDepsList returns a list that only draws its rows. The search input is
+// always active on this screen, so the list's own filter mode ("/" to start,
+// no cursor while typing) is not used: updateDeps feeds it the search text,
+// and depsView draws everything around the rows.
 func newDepsList() list.Model {
-	l := list.New(nil, depDelegate{}, 80, depsMaxHeight)
-	l.Title = "Dependencies"
-	l.SetStatusBarItemName("dependency", "dependencies")
-	l.SetShowHelp(false) // the root model renders one footer for all screens
-	// The list's own pagination is one line taller with several pages than
-	// with one, which would make the frame jump. depsView draws it instead.
+	l := list.New(nil, depDelegate{}, 80, depsMaxRows)
+	l.SetStatusBarItemName("match", "matches") // for the "No matches." text
+	l.SetShowTitle(false)
+	l.SetShowFilter(false)
+	l.SetShowStatusBar(false)
 	l.SetShowPagination(false)
+	l.SetShowHelp(false)
 	l.DisableQuitKeybindings()
-	l.KeyMap.ShowFullHelp.SetEnabled(false)
-	l.KeyMap.CloseFullHelp.SetEnabled(false)
+
+	// Letters belong to the search, so only keys that are not text may move
+	// the cursor. Bindings without keys never match.
+	l.KeyMap.CursorUp = key.NewBinding(key.WithKeys("up"))
+	l.KeyMap.CursorDown = key.NewBinding(key.WithKeys("down"))
+	l.KeyMap.PrevPage = key.NewBinding(key.WithKeys("pgup"))
+	l.KeyMap.NextPage = key.NewBinding(key.WithKeys("pgdown"))
+	l.KeyMap.GoToStart = key.NewBinding()
+	l.KeyMap.GoToEnd = key.NewBinding()
+	l.KeyMap.Filter = key.NewBinding()
+	l.KeyMap.ClearFilter = key.NewBinding()
+	l.KeyMap.ShowFullHelp = key.NewBinding()
+	l.KeyMap.CloseFullHelp = key.NewBinding()
 	return l
+}
+
+func newSearchInput() textinput.Model {
+	input := textinput.New()
+	input.Placeholder = "Type to search"
+	input.CharLimit = 64
+	return input
 }
 
 func depItems(deps []initializr.Dependency) []list.Item {
@@ -75,9 +105,8 @@ func (d depDelegate) Render(w io.Writer, m list.Model, index int, item list.Item
 		}
 	}
 
-	// The list has no cursor while the user is typing a filter.
 	cursor, nameStyle := "  ", lipgloss.NewStyle()
-	if index == m.Index() && m.FilterState() != list.Filtering {
+	if index == m.Index() {
 		cursor, nameStyle = d.styles.selected.Render("> "), d.styles.selected
 	}
 	box := "[ ] "
@@ -129,42 +158,58 @@ func (m *Model) toggleDep() {
 	m.syncDepsDelegate()
 }
 
+// applySearch narrows the list to the dependencies matching the search text
+// and puts the cursor on the best match.
+func (m *Model) applySearch() {
+	if query := m.search.Value(); query != "" {
+		m.deps.SetFilterText(query)
+	} else {
+		m.deps.ResetFilter()
+	}
+}
+
 func (m Model) updateDeps(msg tea.Msg) (Model, tea.Cmd) {
-	// While the user types a filter every key belongs to the list.
-	if k, ok := msg.(tea.KeyPressMsg); ok && m.deps.FilterState() != list.Filtering {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
 		switch {
 		case key.Matches(k, m.keys.Toggle):
 			m.toggleDep()
 			return m, nil
 		case key.Matches(k, m.keys.Next):
+			m.search.Blur()
 			m.setScreen(screenConfirm)
 			return m, nil
+		case key.Matches(k, m.keys.ClearSearch):
+			m.search.SetValue("")
+			m.applySearch()
+			return m, nil
 		case key.Matches(k, m.keys.Back):
-			// With a filter applied, esc clears it (handled by the list).
-			if m.deps.FilterState() == list.Unfiltered {
-				m.setScreen(screenJava)
-				return m, nil
-			}
-		case key.Matches(k, m.keys.Quit):
-			return m.quit()
+			m.search.Blur()
+			m.setScreen(screenJava)
+			return m, nil
+		case key.Matches(k, m.keys.ListNav):
+			var cmd tea.Cmd
+			m.deps, cmd = m.deps.Update(msg)
+			return m, cmd
 		}
 	}
 
+	// Everything else is search text.
+	before := m.search.Value()
 	var cmd tea.Cmd
-	m.deps, cmd = m.deps.Update(msg)
-	if _, ok := msg.(list.FilterMatchesMsg); ok {
-		// The list recounts its pages on key presses only, so the page
-		// dots would lag one keystroke behind the matches. Setting the
-		// size makes it recount.
-		m.deps.SetSize(m.deps.Width(), m.deps.Height())
+	m.search, cmd = m.search.Update(msg)
+	if m.search.Value() != before {
+		m.applySearch()
 	}
 	return m, cmd
 }
 
-// depsFooterHeight is the number of lines depsView adds below the list.
-const depsFooterHeight = 2
-
 func (m Model) depsView() string {
+	total := len(m.metadata.Dependencies)
+	count := fmt.Sprintf("%d dependencies", total)
+	if m.search.Value() != "" {
+		count = fmt.Sprintf("%d of %d", len(m.deps.VisibleItems()), total)
+	}
+
 	// Page dots, or "3/15" when the dots do not fit.
 	var pages string
 	if p := m.deps.Paginator; p.TotalPages > 1 {
@@ -178,5 +223,13 @@ func (m Model) depsView() string {
 	if ids := m.selectedDeps(); len(ids) > 0 {
 		chosen = m.styles.subtle.Render(fmt.Sprintf("Selected (%d): ", len(ids))) + strings.Join(ids, ", ")
 	}
-	return strings.Join([]string{m.deps.View(), pages, chosen}, "\n")
+
+	return strings.Join([]string{
+		m.styles.header.Render("Dependencies"),
+		m.search.View(),
+		m.styles.subtle.Render(count),
+		m.deps.View(),
+		pages,
+		chosen,
+	}, "\n")
 }

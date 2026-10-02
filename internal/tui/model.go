@@ -74,6 +74,7 @@ type Model struct {
 	spinner spinner.Model
 	input   textinput.Model // project name
 	group   textinput.Model
+	search  textinput.Model // dependency search
 	deps    list.Model
 	styles  styles
 }
@@ -94,6 +95,7 @@ func New(backend Backend) Model {
 		spinner: spinner.New(spinner.WithSpinner(spinner.Dot)),
 		input:   newNameInput(),
 		group:   newGroupInput(),
+		search:  newSearchInput(),
 		deps:    newDepsList(),
 	}
 	m.setStyles(true) // replaced once tea.BackgroundColorMsg arrives
@@ -128,8 +130,8 @@ func (m Model) loadCmd() tea.Cmd {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.update(msg)
-	// The dependency list changes which keys apply as its filter opens and
-	// closes, so refresh the bindings after every message.
+	// Typing in the dependency search changes which keys apply, so refresh
+	// the bindings after every message.
 	next.syncKeys()
 	return next, cmd
 }
@@ -245,21 +247,18 @@ func (m *Model) setScreen(s screen) {
 // help footer accurate and stops stray keys from triggering hidden actions.
 func (m *Model) syncKeys() {
 	s := m.screen
-	filter := m.deps.FilterState()
-	typingFilter := s == screenDeps && filter == list.Filtering
-	browsingDeps := s == screenDeps && !typingFilter
-	filterApplied := browsingDeps && filter == list.FilterApplied
+	onDeps := s == screenDeps
+	searching := onDeps && m.search.Value() != ""
 
 	k := &m.keys
-	k.Up.SetEnabled(s == screenJava || browsingDeps)
-	k.Down.SetEnabled(s == screenJava || browsingDeps)
-	k.Move.SetEnabled(s == screenJava || browsingDeps)
-	k.Toggle.SetEnabled(browsingDeps)
-	k.Filter.SetEnabled(browsingDeps)
-	k.ApplyFilter.SetEnabled(typingFilter)
-	k.CancelFilter.SetEnabled(typingFilter)
-	k.ClearFilter.SetEnabled(filterApplied)
-	k.Next.SetEnabled(s == screenName || s == screenGroup || s == screenJava || browsingDeps)
+	k.Up.SetEnabled(s == screenJava)
+	k.Down.SetEnabled(s == screenJava)
+	k.Move.SetEnabled(s == screenJava || onDeps)
+	k.Toggle.SetEnabled(onDeps)
+	k.ListNav.SetEnabled(onDeps)
+	// esc empties the search first and goes back only when it is empty.
+	k.ClearSearch.SetEnabled(searching)
+	k.Next.SetEnabled(s == screenName || s == screenGroup || s == screenJava || onDeps)
 	k.Switch.SetEnabled(s == screenConfirm)
 	k.Confirm.SetEnabled(s == screenConfirm)
 	k.Yes.SetEnabled(s == screenConfirm)
@@ -267,13 +266,14 @@ func (m *Model) syncKeys() {
 	// From the error screen there is only a way back when the answers
 	// exist, i.e. when generating failed rather than loading.
 	generateFailed := s == screenError && m.failed == screenGenerating
-	k.Back.SetEnabled(s == screenGroup || s == screenJava || s == screenConfirm || (browsingDeps && !filterApplied) || generateFailed)
+	k.Back.SetEnabled(s == screenGroup || s == screenJava || s == screenConfirm || (onDeps && !searching) || generateFailed)
 	k.Retry.SetEnabled(s == screenError)
-	// "q" is text on the screens with an input, and esc is taken by Back on
-	// the group screen, which leaves ctrl+c as the only way out there.
+	// "q" is text on the screens with an input. On the name screen esc
+	// quits; on the others esc is taken, which leaves ctrl+c as the only
+	// way out there.
 	k.Cancel.SetEnabled(s == screenName)
-	k.Quit.SetEnabled(s != screenName && s != screenGroup && !typingFilter)
-	k.Interrupt.SetEnabled(s == screenGroup)
+	k.Quit.SetEnabled(s != screenName && s != screenGroup && !onDeps)
+	k.Interrupt.SetEnabled(s == screenGroup || onDeps)
 }
 
 func (m *Model) setStyles(isDark bool) {
@@ -285,17 +285,11 @@ func (m *Model) setStyles(isDark bool) {
 	inputStyles.Focused.Prompt = m.styles.selected
 	m.input.SetStyles(inputStyles)
 	m.group.SetStyles(inputStyles)
+	m.search.SetStyles(inputStyles)
 
-	// Drop the list's default indentation so it lines up with the other
-	// screens.
 	listStyles := list.DefaultStyles(isDark)
-	listStyles.TitleBar = lipgloss.NewStyle()
-	listStyles.Title = m.styles.header
-	listStyles.StatusBar = m.styles.subtle
-	listStyles.Filter.Focused.Prompt = m.styles.selected
-	listStyles.Filter.Blurred.Prompt = m.styles.selected
+	listStyles.NoItems = m.styles.subtle
 	m.deps.Styles = listStyles
-	m.deps.FilterInput.SetStyles(listStyles.Filter)
 	m.syncDepsDelegate()
 }
 
@@ -307,10 +301,11 @@ func (m *Model) resize() {
 	inputWidth := max(m.width-len(m.input.Prompt)-1, 1)
 	m.input.SetWidth(inputWidth)
 	m.group.SetWidth(inputWidth)
+	m.search.SetWidth(inputWidth)
 
 	const blankLines = 3 // below the banner, above the footer, end of frame
-	chrome := lipgloss.Height(m.bannerView()) + depsFooterHeight + lipgloss.Height(m.footerView()) + blankLines
-	m.deps.SetSize(m.width, min(max(m.height-chrome, 4), depsMaxHeight))
+	chrome := lipgloss.Height(m.bannerView()) + depsChromeHeight + lipgloss.Height(m.footerView()) + blankLines
+	m.deps.SetSize(m.width, min(max(m.height-chrome, 1), depsMaxRows))
 }
 
 func (m Model) quit() (Model, tea.Cmd) {

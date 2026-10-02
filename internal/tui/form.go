@@ -155,6 +155,7 @@ func (m Model) updateJava(msg tea.Msg) (Model, tea.Cmd) {
 		m.javaCursor = min(m.javaCursor+1, len(m.metadata.JavaVersions)-1)
 	case key.Matches(k, m.keys.Next):
 		m.setScreen(screenDeps)
+		return m, m.search.Focus()
 	case key.Matches(k, m.keys.Back):
 		m.setScreen(screenGroup)
 		return m, m.group.Focus()
@@ -195,6 +196,7 @@ func (m Model) updateConfirm(msg tea.Msg) (Model, tea.Cmd) {
 		return m.quit()
 	case key.Matches(k, m.keys.Back):
 		m.setScreen(screenDeps)
+		return m, m.search.Focus()
 	}
 	return m, nil
 }
