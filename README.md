@@ -16,6 +16,14 @@ With [Homebrew](https://brew.sh) on macOS or Linux:
 brew install osman-butt/tap/si
 ```
 
+With apt on Debian or Ubuntu:
+
+```sh
+curl -fsSL https://osman-butt.github.io/spring-init-tui/key.asc | sudo tee /etc/apt/keyrings/si.asc > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/si.asc] https://osman-butt.github.io/spring-init-tui stable main" | sudo tee /etc/apt/sources.list.d/si.list
+sudo apt update && sudo apt install si
+```
+
 With Go 1.26 or newer:
 
 ```sh
