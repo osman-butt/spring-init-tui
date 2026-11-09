@@ -3,12 +3,18 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Rebuilds the apt repository from the existing releases without releasing
+  # anything, e.g. after the apt job failed:
+  #
+  #   gh workflow run release.yml --ref main
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the GitHub release and upload the archives
@@ -45,6 +51,8 @@ jobs:
   # that stores them.
   apt:
     needs: release
+    # Also runs when release was skipped (a manual run), but not after it failed.
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -71,6 +79,10 @@ jobs:
             xargs --no-run-if-empty -n 1 curl -fsSL --remote-name --output-dir site/pool/main/s/si
         env:
           GH_TOKEN: ${{ github.token }}
+
+      # The ubuntu-26.04 image behind ubuntu-latest no longer ships apt-utils.
+      - name: Install apt-ftparchive
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends apt-utils
 
       - name: Build and sign the repository
         run: scripts/apt-repo.sh site
